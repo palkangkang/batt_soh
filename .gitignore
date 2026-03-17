@@ -1,0 +1,31 @@
+# Python cache and virtual env
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+
+# Notebook/runtime artifacts
+.ipynb_checkpoints/
+.mplconfig/
+
+# Environment files
+.env
+.env.*
+
+# Large raw data: keep only the raw data dictionary
+/data/raw/*
+!/data/raw/DATA_DICTIONARY.md
+
+# Processed data: keep lightweight metadata/split files only
+/data/processed/*
+!/data/processed/DATA_DICTIONARY.md
+!/data/processed/policy_meaning.csv
+!/data/processed/train_policy_cell_samples.csv
+!/data/processed/valid_policy_cell_samples.csv
+!/data/processed/train_valid_hist_bins.csv
+!/data/processed/train_valid_hist_stats.csv
+
+# Generated outputs
+/outputs/
+
