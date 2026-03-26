@@ -62,14 +62,7 @@ def sanitize_range_label(range_label: str) -> str:
 
 
 def setup_fonts() -> List[str]:
-    candidates = [
-        "Microsoft YaHei",
-        "SimHei",
-        "Noto Sans CJK SC",
-        "PingFang SC",
-        "WenQuanYi Zen Hei",
-        "Arial Unicode MS",
-    ]
+    candidates = ["fonts-noto-cjk"]
     installed = {f.name for f in font_manager.fontManager.ttflist}
     selected = [f for f in candidates if f in installed]
     if not selected:

@@ -27,7 +27,7 @@ RANDOM_SEED = 20260317
 SCATTER_SAMPLE_N = 5000
 WINSOR_LOWER_Q = 0.05
 WINSOR_UPPER_Q = 0.95
-PYTHON_ENV_HOME = Path(r"C:\Users\pal\pyenv\ds_env")
+PYTHON_ENV_HOME = Path(r"C:\Users\pal\pyenv\colab")
 FIRST_OCCURRENCE_RANGE_COUNT = 1
 POLICY_MIN_SAMPLES = 80
 
@@ -75,15 +75,24 @@ def parse_range_low(range_label: str) -> float:
         return float("inf")
 
 
+def sanitize_range_label(range_label: str) -> str:
+    # Example: [3.0,3.1) -> 3p0_3p1
+    return (
+        range_label.replace("[", "")
+        .replace("]", "")
+        .replace(")", "")
+        .replace(",", "_")
+        .replace(".", "p")
+        .replace("-", "m")
+    )
+
+
+def build_charge_variable_name(range_label: str) -> str:
+    return f"charge_delta_ah_{sanitize_range_label(range_label)}"
+
+
 def setup_fonts() -> List[str]:
-    candidates = [
-        "Microsoft YaHei",
-        "SimHei",
-        "Noto Sans CJK SC",
-        "PingFang SC",
-        "WenQuanYi Zen Hei",
-        "Arial Unicode MS",
-    ]
+    candidates = ["fonts-noto-cjk"]
     installed = {f.name for f in font_manager.fontManager.ttflist}
     selected = [f for f in candidates if f in installed]
     if not selected:
@@ -735,6 +744,9 @@ def main() -> None:
     stats_df = pd.DataFrame([s.__dict__ for s in stats_list])
     stats_df["range_low"] = stats_df["range_label"].map(parse_range_low)
     stats_df = stats_df.sort_values("range_low", ascending=True).reset_index(drop=True)
+    stats_df.insert(0, "variable", stats_df["range_label"].map(build_charge_variable_name))
+    stats_df.insert(1, "variable_display", stats_df["range_label"])
+    stats_df.insert(2, "range", stats_df["range_label"])
 
     stats_out = OUTPUT_DIR / "correlation_by_range.csv"
     merged_out = OUTPUT_DIR / "merged_dataset_overview.csv"
@@ -764,6 +776,8 @@ def main() -> None:
         .sort_values("range_low")
         .drop(columns=["range_low"])
     )
+    merged_preview.insert(0, "variable", merged_preview["range"].map(build_charge_variable_name))
+    merged_preview.insert(1, "variable_display", merged_preview["range"])
     merged_preview.to_csv(merged_out, index=False, encoding="utf-8")
 
     save_coefficients_plot(stats_df, coef_png)
@@ -773,11 +787,15 @@ def main() -> None:
     policy_stats_df = compute_policy_layer_stats(merged, min_samples=POLICY_MIN_SAMPLES)
     if policy_stats_df.empty:
         raise RuntimeError("No policy-layer statistics were generated.")
+    policy_stats_df.insert(1, "variable", policy_stats_df["range_label"].map(build_charge_variable_name))
+    policy_stats_df.insert(2, "variable_display", policy_stats_df["range_label"])
     policy_stats_df.to_csv(policy_stats_out, index=False, encoding="utf-8")
 
     policy_summary_df = build_policy_range_summary(policy_stats_df, stats_df)
     if policy_summary_df.empty:
         raise RuntimeError("No policy-layer summary was generated.")
+    policy_summary_df.insert(1, "variable", policy_summary_df["range_label"].map(build_charge_variable_name))
+    policy_summary_df.insert(2, "variable_display", policy_summary_df["range_label"])
     policy_summary_df.to_csv(policy_summary_out, index=False, encoding="utf-8")
     save_policy_spearman_heatmap(policy_stats_df, policy_heatmap_png)
     save_policy_spearman_boxplot(policy_stats_df, stats_df, policy_boxplot_png)

@@ -38,7 +38,7 @@ ENCODING = "utf-8-sig"
 RANDOM_SEED = 20260317
 FIRST_OCCURRENCE_RANGE_COUNT = 1
 
-PYTHON_ENV_HOME = Path(r"C:\Users\pal\pyenv\ds_env")
+PYTHON_ENV_HOME = Path(r"C:\Users\pal\pyenv\colab")
 MPL_CONFIG_DIR = REPO_ROOT / "outputs" / ".mplconfig"
 
 MODEL_PARAMS = {
@@ -83,14 +83,7 @@ def ensure_matplotlib_config() -> List[str]:
     import matplotlib.pyplot as plt  # noqa: WPS433
     from matplotlib import font_manager, rcParams  # noqa: WPS433
 
-    candidates = [
-        "Microsoft YaHei",
-        "SimHei",
-        "Noto Sans CJK SC",
-        "PingFang SC",
-        "WenQuanYi Zen Hei",
-        "Arial Unicode MS",
-    ]
+    candidates = ["fonts-noto-cjk"]
     installed = {f.name for f in font_manager.fontManager.ttflist}
     selected = [f for f in candidates if f in installed]
     if not selected:

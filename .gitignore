@@ -13,9 +13,8 @@ venv/
 .env
 .env.*
 
-# Large raw data: keep only the raw data dictionary
+# Large raw data: ignore all
 /data/raw/*
-!/data/raw/DATA_DICTIONARY.md
 
 # Processed data: keep lightweight metadata/split files only
 /data/processed/*
@@ -25,7 +24,15 @@ venv/
 !/data/processed/valid_policy_cell_samples.csv
 !/data/processed/train_valid_hist_bins.csv
 !/data/processed/train_valid_hist_stats.csv
+!/data/processed/life_performance.csv
+!/data/processed/train_valid_hist_compare.png
+!/data/processed/charge_interval_features.csv
+!/data/processed/discharge_interval_features.csv
 
 # Generated outputs
 /outputs/
 
+# Local collaboration docs (do not publish)
+/AGENTS.md
+/README_AI_STRUCTURE.md
+/SCRIPT_CATALOG.md

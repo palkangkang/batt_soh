@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import csv
+import statistics
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Tuple
@@ -21,10 +22,39 @@ CHARGE_VOLTAGE_START = 3.0
 CHARGE_VOLTAGE_END = 3.6
 DISCHARGE_VOLTAGE_START = 3.6
 DISCHARGE_VOLTAGE_END = 2.8
-VOLTAGE_STEP = 0.1
+VOLTAGE_STEP = 0.05
 
 ENCODING = "utf-8-sig"
-FLOAT_EPS = 1e-9
+FLOAT_EPS = 1e-3
+
+# Temperature outlier filtering before average calculation.
+ENABLE_TEMPERATURE_OUTLIER_FILTER = True
+TEMP_VALID_MIN = -40.0
+TEMP_VALID_MAX = 120.0
+TEMP_MIN_POINTS_FOR_MAD = 5
+TEMP_MAD_Z_THRESHOLD = 3.5
+
+
+def infer_decimal_places(step: float) -> int:
+    s = f"{step:.10f}".rstrip("0").rstrip(".")
+    if "." not in s:
+        return 1
+    return max(1, len(s.split(".")[1]))
+
+
+RANGE_LABEL_DECIMALS = infer_decimal_places(VOLTAGE_STEP)
+
+
+def build_range_label(low: float, high: float, is_last: bool) -> str:
+    # Guard against label collapse like "[3.0,3.0)" when step precision is higher.
+    decimals = RANGE_LABEL_DECIMALS
+    lo_txt = f"{low:.{decimals}f}"
+    hi_txt = f"{high:.{decimals}f}"
+    while lo_txt == hi_txt and decimals < 8:
+        decimals += 1
+        lo_txt = f"{low:.{decimals}f}"
+        hi_txt = f"{high:.{decimals}f}"
+    return f"[{lo_txt},{hi_txt}{']' if is_last else ')'}"
 
 
 @dataclass
@@ -32,6 +62,7 @@ class Record:
     ts: float
     v: float
     ah: float
+    temper: float
 
 
 @dataclass
@@ -97,7 +128,7 @@ def build_ranges(v_start: float, v_end: float, step: float) -> Tuple[str, List[R
                 RangeDef(
                     low=cur,
                     high=nxt,
-                    label=f"[{cur:.1f},{nxt:.1f}{']' if is_last else ')'}",
+                    label=build_range_label(cur, nxt, is_last),
                     is_last=is_last,
                 )
             )
@@ -110,7 +141,7 @@ def build_ranges(v_start: float, v_end: float, step: float) -> Tuple[str, List[R
                 RangeDef(
                     low=nxt,
                     high=cur,
-                    label=f"[{cur:.1f},{nxt:.1f}{']' if is_last else ')'}",
+                    label=build_range_label(cur, nxt, is_last),
                     is_last=is_last,
                 )
             )
@@ -134,7 +165,7 @@ def load_mode_records(file_path: Path, mode: ModeConfig) -> Dict[Tuple[str, str,
     grouped: Dict[Tuple[str, str, int], List[Record]] = {}
     with file_path.open("r", encoding=ENCODING, newline="") as f:
         reader = csv.DictReader(f)
-        required = {"policy", "cell_code", "cycles", "ts", "V", mode.ah_col, mode.flag_col}
+        required = {"policy", "cell_code", "cycles", "ts", "V", "Temper", mode.ah_col, mode.flag_col}
         missing = required.difference(set(reader.fieldnames or []))
         if missing:
             raise KeyError(f"Missing required columns in {file_path}: {sorted(missing)}")
@@ -149,48 +180,77 @@ def load_mode_records(file_path: Path, mode: ModeConfig) -> Dict[Tuple[str, str,
                 ts = float(row["ts"])
                 v = float(row["V"])
                 ah = float(row[mode.ah_col])
+                temper = float(row["Temper"])
             except (TypeError, ValueError, KeyError):
                 continue
 
             key = (policy, cell_code, cycles)
-            grouped.setdefault(key, []).append(Record(ts=ts, v=v, ah=ah))
+            grouped.setdefault(key, []).append(Record(ts=ts, v=v, ah=ah, temper=temper))
 
     for key in grouped:
         grouped[key].sort(key=lambda r: r.ts)
     return grouped
 
 
-def is_valid_directional_segment(
-    records: List[Record],
-    start_idx: int,
-    end_idx: int,
-    rng: RangeDef,
-    direction: str,
-) -> bool:
-    if end_idx <= start_idx:
-        return False
+def is_near_boundary(v: float, target: float) -> bool:
+    return abs(v - target) <= FLOAT_EPS
 
-    start_rec = records[start_idx]
-    end_rec = records[end_idx]
-    prev_v = records[start_idx - 1].v if start_idx > 0 else None
-    next_v = records[end_idx + 1].v if end_idx + 1 < len(records) else None
 
-    if direction == "asc":
-        entered_from_expected_side = (prev_v is None) or (prev_v <= rng.low + FLOAT_EPS)
-        moved_in_expected_direction = end_rec.v > start_rec.v + FLOAT_EPS
-        reached_expected_boundary = (
-            (next_v is not None and next_v >= rng.high - FLOAT_EPS)
-            or (rng.is_last and end_rec.v >= rng.high - FLOAT_EPS)
-        )
-    else:
-        entered_from_expected_side = (prev_v is None) or (prev_v >= rng.high - FLOAT_EPS)
-        moved_in_expected_direction = end_rec.v < start_rec.v - FLOAT_EPS
-        reached_expected_boundary = (
-            (next_v is not None and next_v <= rng.low + FLOAT_EPS)
-            or (rng.is_last and end_rec.v <= rng.low + FLOAT_EPS)
-        )
+def find_boundary_segments(records: List[Record], start_v: float, end_v: float) -> List[Tuple[int, int]]:
+    """
+    Pair segments by first-index boundary matching:
+    1) Find first index near start_v (within FLOAT_EPS).
+    2) From that index onward, find first index near end_v.
+    3) Record this pair and continue searching after the matched end index.
+    """
+    segments: List[Tuple[int, int]] = []
+    n = len(records)
+    search_from = 0
 
-    return entered_from_expected_side and moved_in_expected_direction and reached_expected_boundary
+    while search_from < n:
+        start_idx = None
+        for i in range(search_from, n):
+            if is_near_boundary(records[i].v, start_v):
+                start_idx = i
+                break
+        if start_idx is None:
+            break
+
+        end_idx = None
+        for j in range(start_idx + 1, n):
+            if is_near_boundary(records[j].v, end_v):
+                end_idx = j
+                break
+        if end_idx is None:
+            break
+
+        segments.append((start_idx, end_idx))
+        search_from = end_idx + 1
+
+    return segments
+
+
+def filter_temperatures(values: List[float]) -> List[float]:
+    if not ENABLE_TEMPERATURE_OUTLIER_FILTER:
+        return values
+
+    # 1) Physical range clipping first.
+    clipped = [v for v in values if TEMP_VALID_MIN <= v <= TEMP_VALID_MAX]
+    if not clipped:
+        return []
+
+    # 2) Robust MAD filtering for obvious spikes/drops.
+    if len(clipped) < TEMP_MIN_POINTS_FOR_MAD:
+        return clipped
+
+    med = statistics.median(clipped)
+    deviations = [abs(v - med) for v in clipped]
+    mad = statistics.median(deviations)
+    if mad <= FLOAT_EPS:
+        return clipped
+
+    filtered = [v for v in clipped if abs(0.6745 * (v - med) / mad) <= TEMP_MAD_Z_THRESHOLD]
+    return filtered if filtered else clipped
 
 
 def extract_features(
@@ -202,22 +262,16 @@ def extract_features(
 
     for (policy, cell_code, cycles), records in grouped.items():
         for rng in voltage_ranges:
-            # Slice contiguous runs in this voltage range, then keep only directional runs.
-            runs: List[Tuple[int, int]] = []
-            run_start = None
-            for i, r in enumerate(records):
-                in_rng = is_in_range(r.v, rng, direction)
-                if in_rng and run_start is None:
-                    run_start = i
-                elif (not in_rng) and run_start is not None:
-                    runs.append((run_start, i - 1))
-                    run_start = None
-            if run_start is not None:
-                runs.append((run_start, len(records) - 1))
+            if direction == "asc":
+                # Example: [3.45,3.50) => first 3.45±eps point to first later 3.50±eps point.
+                start_v, end_v = rng.low, rng.high
+            else:
+                # Example: [3.50,3.45) => first 3.50±eps point to first later 3.45±eps point.
+                start_v, end_v = rng.high, rng.low
 
-            valid_segments: List[Tuple[float, float]] = []
-            for start_idx, end_idx in runs:
-                if not is_valid_directional_segment(records, start_idx, end_idx, rng, direction):
+            valid_segments: List[Tuple[float, float, float]] = []
+            for start_idx, end_idx in find_boundary_segments(records, start_v, end_v):
+                if end_idx <= start_idx:
                     continue
 
                 start_rec = records[start_idx]
@@ -227,11 +281,16 @@ def extract_features(
                 if delta_ah < -FLOAT_EPS or duration_s <= FLOAT_EPS:
                     continue
 
-                valid_segments.append((delta_ah, duration_s))
+                seg_temps_raw = [r.temper for r in records[start_idx : end_idx + 1]]
+                seg_temps = filter_temperatures(seg_temps_raw)
+                if not seg_temps:
+                    continue
+                avg_temper = sum(seg_temps) / len(seg_temps)
+                valid_segments.append((delta_ah, duration_s, avg_temper))
 
             # Count only validated directional segments.
             total_count = len(valid_segments)
-            for idx, (delta_ah, duration_s) in enumerate(valid_segments, start=1):
+            for idx, (delta_ah, duration_s, avg_temper) in enumerate(valid_segments, start=1):
                 output_rows.append(
                     {
                         "state": mode.state,
@@ -241,6 +300,7 @@ def extract_features(
                         "range": rng.label,
                         "delta_ah": delta_ah,
                         "charge_duration_s": duration_s,
+                        "avg_temper": avg_temper,
                         "range_count": idx,
                         "range_total_count": total_count,
                     }
@@ -269,6 +329,7 @@ def save_csv(rows: List[dict], out_path: Path) -> None:
         "range",
         "delta_ah",
         "charge_duration_s",
+        "avg_temper",
         "range_count",
         "range_total_count",
     ]

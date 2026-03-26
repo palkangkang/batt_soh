@@ -21,17 +21,21 @@
 | `policy` | 策略名称 | Test Policy | 无 | 测试工况/控制策略标识，来源于原始数据 `policy`。 |
 | `cell_code` | 电芯编号 | Cell Code | 无 | 电芯唯一标识，来源于原始数据 `cell_code`。 |
 | `cycles` | 循环序号 | Cycle Index | 次（count） | 当前记录对应的循环编号。 |
-| `range` | 电压区间 | Voltage Range | 伏特（V） | 特征提取所在电压区间标签。充电示例：`[3.0,3.1)`；放电示例：`[3.6,3.5)`。 |
+| `range` | 电压区间 | Voltage Range | 伏特（V） | 特征提取所在电压区间标签。当前步长为 `0.05V`，充电示例：`[3.00,3.05)`；放电示例：`[3.60,3.55)`。 |
 | `delta_ah` | 区间容量差 | Capacity Delta in Range | 安时（Ah） | 单次区间片段内累计容量差（结束值 - 起始值）。充电取自 `ah_chg`，放电取自 `ah_dischg`。 |
 | `charge_duration_s` | 区间时长 | Duration in Range | 秒（s） | 单次区间片段内时间差（结束 `ts` - 起始 `ts`）。列名沿用 `charge_duration_s`，当 `state=dischg` 时表示放电区间时长。 |
+| `avg_temper` | 区间平均温度 | Average Temperature in Range | 摄氏度（°C） | 单次区间片段内温度均值。先做异常值处理（物理范围裁剪 + MAD 鲁棒过滤），再对保留采样点求平均。 |
 | `range_count` | 区间出现序号 | Range Occurrence Index | 次（count） | 同一 `state + policy + cell_code + cycles + range` 下该片段第几次出现（从 1 开始）。 |
 | `range_total_count` | 区间总出现次数 | Total Occurrences per Range | 次（count） | 同一 `state + policy + cell_code + cycles + range` 下，通过方向性筛选后的有效片段总数。 |
 
 区间特征提取规则摘要：
 
-1. 充电特征仅保留“低压到高压”的上升过程，电压区间 `3.0V -> 3.6V`，步长 `0.1V`。
-2. 放电特征仅保留“高压到低压”的下降过程，电压区间 `3.6V -> 2.8V`，步长 `0.1V`。
-3. 若同一区间在同一循环中出现多次，会拆分为多行并通过 `range_count`/`range_total_count` 标记。
+1. 电压区间步长为 `0.05V`；充电区间 `3.0V -> 3.6V`，放电区间 `3.6V -> 2.8V`。
+2. 每个区间按“边界点首索引配对”提取：
+   - 充电：先取第一个 `lower_bound±0.001V` 点索引，再取其后第一个 `upper_bound±0.001V` 点索引。
+   - 放电：先取第一个 `upper_bound±0.001V` 点索引，再取其后第一个 `lower_bound±0.001V` 点索引。
+3. 若同一区间在同一循环中出现多次有效边界配对，会拆分为多行，并通过 `range_count`/`range_total_count` 标记。
+4. `avg_temper` 在计算前会先剔除明显异常温度点：先按物理范围过滤，再按 MAD 规则过滤离群点。
 
 ## B. 寿命表现文件字段定义
 
