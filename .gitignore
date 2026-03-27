@@ -36,3 +36,6 @@ venv/
 /AGENTS.md
 /README_AI_STRUCTURE.md
 /SCRIPT_CATALOG.md
+
+# Local IDE settings
+/.vscode/
