@@ -29,8 +29,17 @@ venv/
 !/data/processed/charge_interval_features.csv
 !/data/processed/discharge_interval_features.csv
 
-# Generated outputs
-/outputs/
+# Generated outputs: ignore by default
+/outputs/*
+
+# Allow publishing analysis artifacts only
+!/outputs/analysis/
+/outputs/analysis/**
+!/outputs/analysis/**/
+!/outputs/analysis/**/*.csv
+!/outputs/analysis/**/*.md
+!/outputs/analysis/**/*.png
+!/outputs/analysis/**/*.json
 
 # Local collaboration docs (do not publish)
 /AGENTS.md

@@ -1,0 +1,12 @@
+{
+  "n_estimators": 100,
+  "max_depth": 24,
+  "min_samples_leaf": 3,
+  "min_samples_split": 10,
+  "max_features": 0.3,
+  "bootstrap": true,
+  "max_samples": 0.85,
+  "criterion": "squared_error",
+  "random_state": 20260318,
+  "n_jobs": 1
+}

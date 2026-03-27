@@ -1,0 +1,22 @@
+﻿metric,value
+run_time,2026-03-27 17:00:30
+python_executable,C:\Users\pal\.virtualenvs\colab-OixbOpvz\Scripts\python.EXE
+python_version,3.12.10
+horizon_cycles,200
+treatment_mode,initial
+exclude_policy_prefix,VARCHARGE
+n_rows,102449
+n_policy,78
+n_cell,175
+n_policy_cell,180
+treatment_min,1.0
+treatment_max,8.0
+treatment_q01,3.6
+treatment_q99,8.0
+treatment_std,0.9165543937896132
+grid_base_min,3.6
+grid_base_max,7.0000000000000036
+grid_base_points,35
+grid_eval_points,64
+bandwidth,0.2
+treatment_residual_std,0.715210419072553
