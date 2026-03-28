@@ -1,22 +1,22 @@
 ﻿metric,value
-run_time,2026-03-27 17:00:30
+run_time,2026-03-28 16:14:27
 python_executable,C:\Users\pal\.virtualenvs\colab-OixbOpvz\Scripts\python.EXE
 python_version,3.12.10
 horizon_cycles,200
-treatment_mode,initial
+treatment_mode,effective_mean
 exclude_policy_prefix,VARCHARGE
 n_rows,102449
 n_policy,78
 n_cell,175
 n_policy_cell,180
-treatment_min,1.0
-treatment_max,8.0
+treatment_min,3.6
+treatment_max,5.8
 treatment_q01,3.6
-treatment_q99,8.0
-treatment_std,0.9165543937896132
+treatment_q99,5.279999999999999
+treatment_std,0.32822846781891823
 grid_base_min,3.6
-grid_base_max,7.0000000000000036
-grid_base_points,35
-grid_eval_points,64
+grid_base_max,4.200000000000001
+grid_base_points,7
+grid_eval_points,14
 bandwidth,0.2
-treatment_residual_std,0.715210419072553
+treatment_residual_std,0.2568552725331044

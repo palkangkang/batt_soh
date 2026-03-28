@@ -1,2 +1,2 @@
-﻿group,effect_plus_1c,ci_low,ci_high,bootstrap_success,n_rows,n_clusters
-global,0.014136731903313934,0.010913559713449606,0.01742786476856202,400,102449,180
+﻿scheme,group,group_label,effect_plus_1c,ci_low,ci_high,bootstrap_success,n_rows,n_clusters
+fixed4,global,全局,0.020937858766062172,-0.008027881774288155,0.046100740159268655,400,102449,180
