@@ -1,0 +1,3 @@
+﻿scheme,group,group_label,effect_plus_1c,ci_low,ci_high,bootstrap_success,n_rows,n_clusters,treatment_mode
+fixed4,global,全局,0.013828927395127396,0.010753332363526439,0.017071387752191476,400,101649,180,initial
+fixed4,global,全局,0.014658067249862683,0.012841337624643753,0.016558951881913555,400,101649,180,window_mean

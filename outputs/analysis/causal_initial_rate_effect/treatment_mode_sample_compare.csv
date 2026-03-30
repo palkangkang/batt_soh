@@ -1,0 +1,13 @@
+﻿metric,value
+initial_n_rows_before_intersection,102449.0
+window_mean_n_rows_before_intersection,101649.0
+intersection_n_rows,101649.0
+initial_n_clusters_before_intersection,180.0
+window_mean_n_clusters_before_intersection,180.0
+intersection_n_clusters,180.0
+q_ref_coverage,1.0
+window_mean_coverage,0.9946765979210638
+window_mean_clip_low,1.0296835890160763
+window_mean_clip_high,5.656836776246979
+window_mean_clip_low_share,0.01000130357323909
+window_mean_clip_high_share,0.01000130357323909
