@@ -1,0 +1,21 @@
+﻿parameter_name,section,source_file,source_columns,formula_or_rule,notes
+run_time,分析设定,运行时系统时钟,N/A,datetime.now(),报告生成时间，不来自数据表。
+python_executable,分析设定,运行时环境,N/A,sys.executable,用于复现解释器路径。
+python_version,分析设定,运行时环境,N/A,sys.version.split()[0],用于复现 Python 主版本。
+horizon_cycles,分析设定,命令行参数,--horizon-cycles,window_end_cycle = window_start_cycle + horizon_cycles,本次默认 200，但输出命名不显式包含 200。
+treatment_mode,分析设定,命令行参数,--treatment-mode,initial / effective_mean / window_mean,window_mean 为窗口真实平均充电倍率口径。
+exclude_policy_prefix,分析设定,命令行参数,--exclude-policy-prefix,policy.startswith(prefix) 的样本被排除,本次默认排除 VARCHARGE。
+treatment_value,处理变量,data/processed/policy_meaning.csv + data/processed/charge_interval_features.csv + data/processed/life_performance.csv,"initial_c_rate, switch_soc_percent, post_switch_c_rate, delta_ah, charge_duration_s, q_discharge",initial: initial_c_rate; effective_mean: C1*SOC + C2*(1-SOC); window_mean: (Σdelta_ah/Σduration_h)/q_ref,window_mean 中 q_ref 取每 policy+cell 前 N 个有效循环 q_discharge 中位数，并按分位数裁剪后用于建模。
+y_rel_drop,结果变量,data/processed/life_performance.csv,"q_discharge, cycles",y_rel_drop=(Q_t - Q_{t+h}) / Q_t,Q_t 与 Q_{t+h} 由窗口连接得到。
+life_stage,分阶段定义,analysis_dataset_windows.csv(中间表),window_start_cycle,"并行双方案：fixed4=[0,500)/[500,1000)/[1000,1500)/[1500,+∞)；quantile4=rank(window_start_cycle)后qcut(4)",固定4段与分位数4段并行估计，用于敏感性对比。
+effect_plus_1c,主效应与分阶段效应,delta_plus_1c_curve.csv(中间结果),"delta_global, delta_<stage>, weight_global, weight_<stage>",effect=Σ weight(t)*[m(t+1)-m(t)],全局与分阶段分别加权汇总。
+ci_low / ci_high,主效应与分阶段效应,analysis_dataset_windows.csv(中间表),cluster_id,按 cluster_id 进行 bootstrap，取 2.5% 与 97.5% 分位,bootstrap 次数由 --n-bootstrap 控制。
+n_rows,样本规模,analysis_dataset_windows.csv,全部行,n_rows=len(df),滚动窗口样本行数。
+n_policy / n_cell / n_policy_cell,样本规模,analysis_dataset_windows.csv,"policy, cell_code, cluster_id",nunique 统计,policy_cell 由 policy|cell_code 组成。
+treatment_min / treatment_max / treatment_q01 / treatment_q99 / treatment_std,处理变量诊断,analysis_dataset_windows.csv,treatment_value,min/max/quantile/std,用于支持区间与分布诊断。
+grid_base_min / grid_base_max / grid_base_points / grid_eval_points,估计网格,模型配置 + treatment_value,"--grid-step, --trim-quantile, treatment_value",build_grids() 生成 base_grid 和 eval_grid,base_grid 用于 m(t+1)-m(t) 计算。
+bandwidth,核平滑设置,analysis_dataset_windows.csv,treatment_value,"max(1.06*std*n^(-1/5),0.2)",用于 kernel/GPS 权重。
+treatment_residual_std,GPS 建模,analysis_dataset_windows.csv,"treatment_value, switch_soc_percent, post_switch_c_rate, window_start_cycle",LinearRegression 残差标准差,GPS 密度按高斯残差近似。
+weight_mean / weight_std / weight_p95 / weight_p99 / weight_max / effective_sample_size / clip_threshold,权重诊断,diagnostics_weights.csv,各权重统计列,按每个 t_eval 对 raw_w=kernel/gps 统计并裁剪,用于判断重叠性和稳定性。
+n_bootstrap,复现命令参数,命令行参数,--n-bootstrap,bootstrap 重采样次数,本次默认 400。
+grid_step / trim_quantile / weight_clip_quantile / seed / encoding,复现命令参数,命令行参数,"--grid-step, --trim-quantile, --weight-clip-quantile, --seed, --encoding",直接控制网格、裁剪、随机种子与读写编码,保证复现可控。
