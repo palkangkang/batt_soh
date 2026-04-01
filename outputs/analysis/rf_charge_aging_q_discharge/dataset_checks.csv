@@ -1,0 +1,7 @@
+check_item,pass_flag
+check_qmin_filter_zero_lt,1
+check_qmax_filter_zero_gt,1
+check_60_dim_feature_columns,1
+check_split_leakage_zero_overlap,1
+check_abnormal_rows_retained,1
+check_metrics_are_finite,1

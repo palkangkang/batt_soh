@@ -58,3 +58,105 @@
 1. 新增或修改特征列时，同步更新本字典并注明来源脚本。
 2. 若特征提取规则变化（电压区间、步长、方向筛选），需同步更新“区间特征提取规则摘要”。
 3. 对 `q_discharge` 等关键指标，建议在建模前做单位与物理范围复核。
+
+## C. 充电老化路径统计文件字段定义
+
+适用文件：
+
+- `data/processed/charge_aging_path_timeseries.csv`
+- `data/processed/charge_aging_path_final.csv`
+- `data/processed/charge_aging_path_bin_edges.csv`
+- `data/processed/charge_aging_path_ts_anomalies.csv`
+- `data/processed/charge_aging_path_abnormal_cells.csv`
+- `data/processed/charge_aging_path_timeseries_abnormal_cells.csv`
+
+口径补充（v6）：
+
+1. 温度清洗：`Temper < 20°C` 或 `Temper > 60°C` 视为异常；按同一 `cycle` 的时间顺序先前向填充（`ffill`），再后向填充（`bfill`）替代。
+2. 倍率边界：`rate` 分箱下边界强制为 `0.0`，其余边界由全局分位确定。
+3. 时间写盘精度：所有输出文件中的时间列在保存时统一保留 `1` 位有效数字（内部计算仍使用全精度）。
+4. 生命周期标签过滤：先在 `life_performance.csv` 中按 `q_min <= q_discharge <= q_max`（默认 `0.3 <= q_discharge <= 1.3`）过滤，再据此计算 `base_q_discharge_100` 与 `cycle_map`；超出区间的 cycle 不参与充电老化路径特征构建。
+
+### C1. `charge_aging_path_timeseries.csv`
+
+按 `policy + cell_code + cycles + cross_bin` 粒度输出充电累计路径时序（每个 cycle 固定 60 个 `cross_bin`，`cycles` 集来自区间过滤后的生命周期标签）。
+
+| 列名 | 中文名称 | 单位 | 说明 |
+|---|---|---|---|
+| `policy` | 策略名称 | 无 | 测试工况标识。 |
+| `cell_code` | 电芯编号 | 无 | 电芯唯一标识。 |
+| `cycles` | 循环序号 | 次 | 循环编号。 |
+| `soc_bin` | SOC 分箱编号 | 无 | 1~3，对应 `[0,10)`,`[10,90)`,`[90,100]`。 |
+| `rate_bin` | 倍率分箱编号 | 无 | 1~4（全局四分位）。 |
+| `temp_bin` | 温度分箱编号 | 无 | 1~5（全局五分位）。 |
+| `cross_bin` | 交叉分箱编号 | 无 | 1~60，定义：`(soc_bin-1)*20 + (rate_bin-1)*5 + temp_bin`。 |
+| `soc_label` | SOC 分箱标签 | 无 | 分箱文本标签。 |
+| `rate_label` | 倍率分箱标签 | 无 | 3 位有效数字区间标签，首段下边界固定从 `0` 开始。 |
+| `temp_label` | 温度分箱标签 | °C | 四舍五入到整数的区间标签。 |
+| `cross_label` | 交叉分箱标签 | 无 | 形如 `s1_r2_t3`。 |
+| `cycle_charge_time_h` | 当循环充电时长 | 小时（h） | 当前 cycle 在该交叉分箱的充电时间（仅统计 `flag_chg=1` 且 `I_mid>0`，写盘保留 1 位有效数字）。 |
+| `cumulative_charge_time_h` | 累计充电时长 | 小时（h） | 到当前 cycle 为止该交叉分箱的累计充电时长（写盘保留 1 位有效数字）。 |
+| `nonzero_cross_bin_count_cycle` | 当循环非零分箱数 | 个 | 当前 cycle 的 60 个 `cross_bin` 中，`cycle_charge_time_h > 0` 的数量。 |
+| `is_abnormal_cell` | 异常电芯标记 | 0/1 | 若该电芯存在任一 `dt_s > 3600` 的充电时间跳变，则为 1。 |
+
+### C2. `charge_aging_path_final.csv`
+
+按 `policy + cell_code + cross_bin` 聚合的终态累计结果（仅来自区间过滤后 cycle 集的充电统计）。
+
+| 列名 | 中文名称 | 单位 | 说明 |
+|---|---|---|---|
+| `policy` | 策略名称 | 无 | 同上。 |
+| `cell_code` | 电芯编号 | 无 | 同上。 |
+| `soc_bin` / `rate_bin` / `temp_bin` / `cross_bin` | 分箱编号 | 无 | 同 `timeseries` 定义。 |
+| `soc_label` / `rate_label` / `temp_label` / `cross_label` | 分箱标签 | 无 | 同 `timeseries` 定义。 |
+| `is_abnormal_cell` | 异常电芯标记 | 0/1 | 同 `timeseries`。 |
+| `total_charge_time_h` | 总充电时长 | 小时（h） | 全寿命该分箱累计充电时长（写盘保留 1 位有效数字）。 |
+| `final_cumulative_charge_time_h` | 终态累计充电时长 | 小时（h） | 等价于 `cumulative_charge_time_h` 的末值（写盘保留 1 位有效数字）。 |
+| `max_cycle` | 最大循环序号 | 次 | 该电芯覆盖到的最大循环编号。 |
+
+### C3. `charge_aging_path_bin_edges.csv`
+
+60 个交叉分箱的映射与边界定义表。
+
+| 列名 | 中文名称 | 单位 | 说明 |
+|---|---|---|---|
+| `soc_bin` / `rate_bin` / `temp_bin` / `cross_bin` | 分箱编号 | 无 | 同上。 |
+| `soc_label` / `rate_label` / `temp_label` / `cross_label` | 分箱标签 | 无 | 同上。 |
+| `rate_edge_low_raw` / `rate_edge_high_raw` | 倍率原始边界 | C-rate | 未格式化的浮点边界值，首段下边界固定 `0.0`。 |
+| `temp_edge_low_raw` / `temp_edge_high_raw` | 温度原始边界 | °C | 未取整的浮点边界值。 |
+| `temp_edge_low_int` / `temp_edge_high_int` | 温度显示边界 | °C | 四舍五入后的整数边界。 |
+
+### C4. `charge_aging_path_ts_anomalies.csv`
+
+充电区间级时间跳变异常明细（用于诊断与异常电芯标记，主统计不剔除）。
+
+| 列名 | 中文名称 | 单位 | 说明 |
+|---|---|---|---|
+| `policy` | 策略名称 | 无 | 同上。 |
+| `cell_code` | 电芯编号 | 无 | 同上。 |
+| `cycles` | 循环序号 | 次 | 同上。 |
+| `ts_prev` / `ts` | 相邻时间戳 | 秒（s） | 区间起止 `ts`（写盘保留 1 位有效数字）。 |
+| `dt_s` | 相邻时间差 | 秒（s） | `ts - ts_prev`（写盘保留 1 位有效数字）。 |
+| `soc_bin` | SOC 分箱编号 | 无 | 同上。 |
+| `soc_mid_percent` | 区间中点 SOC | % | 相邻点平均 SOC（0~100）。 |
+| `c_rate_mid` | 区间中点倍率 | C-rate | 相邻点平均电流除以基准容量。 |
+| `temp_mid_c` | 区间中点温度 | °C | 清洗后温度（20~60°C 异常替代）在相邻点上的平均值。 |
+| `ts_anomaly_reason` | 异常类型 | 文本 | `non_positive_dt` 或 `large_dt_gt_10s`。 |
+
+### C5. `charge_aging_path_abnormal_cells.csv`
+
+异常电芯（`dt_s > 3600`）级别清单（用于 `is_abnormal_cell` 标记，主表仍保留异常电芯数据）。
+
+| 列名 | 中文名称 | 单位 | 说明 |
+|---|---|---|---|
+| `policy` | 策略名称 | 无 | 同上。 |
+| `cell_code` | 电芯编号 | 无 | 同上。 |
+| `anomaly_count_gt_600s` | 中等跳变次数 | 次 | `dt_s > 600` 的区间数量。 |
+| `anomaly_count_gt_3600s` | 超大跳变次数 | 次 | `dt_s > 3600` 的区间数量。 |
+| `max_dt_s` | 最大时间跳变 | 秒（s） | 当前电芯最大 `dt_s`（写盘保留 1 位有效数字）。 |
+| `first_anomaly_cycle` | 首次超大跳变循环 | 次/空 | 首次出现 `dt_s > 3600` 的循环编号。 |
+| `last_anomaly_cycle` | 最后超大跳变循环 | 次/空 | 最后出现 `dt_s > 3600` 的循环编号。 |
+
+### C6. `charge_aging_path_timeseries_abnormal_cells.csv`
+
+`timeseries` 的异常电芯子集，列结构与 `charge_aging_path_timeseries.csv` 完全一致，仅包含 `is_abnormal_cell=1` 的电芯记录，用于异常样本单独分析。
