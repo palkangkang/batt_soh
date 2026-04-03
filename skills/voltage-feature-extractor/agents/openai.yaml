@@ -1,0 +1,4 @@
+﻿interface:
+  display_name: "Voltage Feature Extractor"
+  short_description: "Extract configurable charge/discharge voltage-range features"
+  default_prompt: "Extract charge and discharge voltage-interval features from cycles_*.csv files, with configurable voltage partitions and voltage matching tolerance, using boundary first-index pairing logic."

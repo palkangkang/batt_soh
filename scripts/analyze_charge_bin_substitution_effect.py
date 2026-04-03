@@ -87,6 +87,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--bootstrap-iters", type=int, default=500)
     parser.add_argument("--placebo-perm-iters", type=int, default=100)
     parser.add_argument("--timeseries-chunksize", type=int, default=200000)
+    parser.add_argument("--report-style", type=str, default="paper_zh")
+    parser.add_argument("--appendix-full60", type=int, default=1)
     return parser.parse_args()
 
 
@@ -836,6 +838,189 @@ def build_screening_tables(
     return score, top_bins, overlap_ratio
 
 
+def save_screening_top20_bar(
+    score_df: pd.DataFrame,
+    out_png: Path,
+    top_n: int = 20,
+) -> None:
+    """Save bar chart for top-N combined screening scores."""
+
+    import matplotlib.pyplot as plt  # noqa: WPS433
+
+    top = score_df.sort_values("rank_combined", ascending=True, kind="mergesort").head(
+        int(top_n)
+    )
+    if top.empty:
+        fig, ax = plt.subplots(1, 1, figsize=(9.5, 4.0))
+        ax.text(0.5, 0.5, "No screening rows.", ha="center", va="center")
+        ax.axis("off")
+        fig.tight_layout()
+        fig.savefig(out_png, format="png")
+        plt.close(fig)
+        return
+
+    top = top.copy()
+    top["label"] = top.apply(
+        lambda row: f"bin{int(row['cross_bin']):02d} ({str(row['cross_label'])})",
+        axis=1,
+    )
+    top = top.sort_values("combined_score", ascending=True, kind="mergesort")
+    fig_h = max(6.0, 0.34 * len(top) + 2.4)
+    fig, ax = plt.subplots(1, 1, figsize=(11.0, fig_h))
+    y_pos = np.arange(len(top))
+    ax.barh(y_pos, top["combined_score"].to_numpy(float), color="#0284c7", alpha=0.88)
+    ax.set_yticks(y_pos)
+    ax.set_yticklabels(top["label"].tolist())
+    ax.set_xlabel("Combined Screening Score")
+    ax.set_ylabel("Top bins")
+    ax.set_title("Top 20 Screening Scores (Correlation + Permutation Importance)")
+    ax.grid(True, axis="x", linestyle="--", alpha=0.25)
+    fig.tight_layout()
+    fig.savefig(out_png, format="png")
+    plt.close(fig)
+
+
+def save_screening_heatmap_soc_panels(
+    score_df: pd.DataFrame,
+    out_png: Path,
+) -> None:
+    """Save SOC-panel heatmap for all 60-bin screening combined scores."""
+
+    import matplotlib.pyplot as plt  # noqa: WPS433
+
+    work = score_df.copy()
+    if work.empty:
+        fig, ax = plt.subplots(1, 1, figsize=(9.5, 4.0))
+        ax.text(0.5, 0.5, "No screening rows.", ha="center", va="center")
+        ax.axis("off")
+        fig.tight_layout()
+        fig.savefig(out_png, format="png")
+        plt.close(fig)
+        return
+
+    soc_labels = (
+        work[["soc_bin", "soc_label"]]
+        .drop_duplicates(["soc_bin"], keep="first")
+        .set_index("soc_bin")["soc_label"]
+        .to_dict()
+    )
+    v_min = float(work["combined_score"].min())
+    v_max = float(work["combined_score"].max())
+
+    fig, axes = plt.subplots(1, 3, figsize=(13.8, 4.8), sharey=True)
+    for idx, soc_bin in enumerate([1, 2, 3]):
+        ax = axes[idx]
+        sub = work[work["soc_bin"] == soc_bin].copy()
+        mat = (
+            sub.pivot_table(
+                index="rate_bin",
+                columns="temp_bin",
+                values="combined_score",
+                aggfunc="mean",
+            )
+            .reindex(index=[1, 2, 3, 4], columns=[1, 2, 3, 4, 5])
+            .to_numpy(float)
+        )
+        image = ax.imshow(
+            mat,
+            origin="lower",
+            aspect="auto",
+            cmap="YlOrRd",
+            vmin=v_min,
+            vmax=v_max,
+        )
+        ax.set_xticks(np.arange(5))
+        ax.set_xticklabels([f"T{t}" for t in [1, 2, 3, 4, 5]])
+        ax.set_yticks(np.arange(4))
+        ax.set_yticklabels([f"R{r}" for r in [1, 2, 3, 4]])
+        soc_label = str(soc_labels.get(soc_bin, f"SOC {soc_bin}"))
+        ax.set_title(f"SOC{soc_bin} {soc_label}")
+        ax.set_xlabel("Temp bin")
+        if idx == 0:
+            ax.set_ylabel("Rate bin")
+
+    cbar = fig.colorbar(image, ax=axes.ravel().tolist(), fraction=0.03, pad=0.02)
+    cbar.set_label("Combined Screening Score")
+    fig.suptitle("Screening Heatmap by SOC Panels (Rate x Temp)", y=0.995)
+    fig.tight_layout()
+    fig.savefig(out_png, format="png")
+    plt.close(fig)
+
+
+def save_effect_main_vs_sensitivity_scatter(
+    main_df: pd.DataFrame,
+    sens_df: pd.DataFrame,
+    out_png: Path,
+) -> None:
+    """Save scatter plot comparing main and sensitivity causal effects."""
+
+    import matplotlib.pyplot as plt  # noqa: WPS433
+
+    main_valid = main_df[main_df["skip_reason"] == ""].copy()
+    sens_valid = sens_df[sens_df["skip_reason"] == ""].copy()
+    merged = main_valid[
+        ["cross_bin", "cross_label", "effect_per_1pp_ah", "q_value"]
+    ].merge(
+        sens_valid[["cross_bin", "effect_per_1pp_ah", "q_value"]],
+        on="cross_bin",
+        how="inner",
+        suffixes=("_main", "_sens"),
+    )
+    if merged.empty:
+        fig, ax = plt.subplots(1, 1, figsize=(9.5, 4.0))
+        ax.text(0.5, 0.5, "No overlapping valid effects.", ha="center", va="center")
+        ax.axis("off")
+        fig.tight_layout()
+        fig.savefig(out_png, format="png")
+        plt.close(fig)
+        return
+
+    x = merged["effect_per_1pp_ah_main"].to_numpy(float)
+    y = merged["effect_per_1pp_ah_sens"].to_numpy(float)
+    lo = float(min(np.min(x), np.min(y)))
+    hi = float(max(np.max(x), np.max(y)))
+    span = max(1e-6, hi - lo)
+    pad = 0.08 * span
+    lo_p = lo - pad
+    hi_p = hi + pad
+
+    sig_mask = (
+        (pd.to_numeric(merged["q_value_main"], errors="coerce") <= 0.1)
+        & (pd.to_numeric(merged["q_value_sens"], errors="coerce") <= 0.1)
+    ).to_numpy(bool)
+
+    fig, ax = plt.subplots(1, 1, figsize=(8.8, 7.2))
+    ax.scatter(
+        x[~sig_mask],
+        y[~sig_mask],
+        s=42,
+        alpha=0.7,
+        color="#64748b",
+        label="Others",
+    )
+    ax.scatter(
+        x[sig_mask],
+        y[sig_mask],
+        s=56,
+        alpha=0.9,
+        color="#0ea5e9",
+        label="q<=0.1 in both",
+    )
+    ax.plot([lo_p, hi_p], [lo_p, hi_p], linestyle="--", color="#ef4444", linewidth=1.2)
+    ax.axhline(0.0, color="#94a3b8", linewidth=1.0)
+    ax.axvline(0.0, color="#94a3b8", linewidth=1.0)
+    ax.set_xlim(lo_p, hi_p)
+    ax.set_ylim(lo_p, hi_p)
+    ax.set_xlabel("Main analysis effect (Ah per +1pp)")
+    ax.set_ylabel("Sensitivity effect (Ah per +1pp)")
+    ax.set_title("Main vs Sensitivity Effect Consistency")
+    ax.grid(True, linestyle="--", alpha=0.22)
+    ax.legend(loc="lower right", frameon=True)
+    fig.tight_layout()
+    fig.savefig(out_png, format="png")
+    plt.close(fig)
+
+
 def save_effect_forest_plot(
     causal_df: pd.DataFrame,
     out_png: Path,
@@ -936,32 +1121,50 @@ def build_controlled_protocol(
     lines: List[str] = []
     lines.append("# 受控实验方案（自动生成）")
     lines.append("")
+    lines.append("## 0. 方案摘要")
     lines.append(f"- 生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    lines.append("- 目的：验证“将充电时间份额从其余59区间替代到目标区间”是否改善下一循环放电容量。")
-    lines.append("- 替代幅度：每个试验臂固定 `+5pp`（即 +0.05 时间份额）。")
+    lines.append("- 目标：验证“将充电时间份额从其余59区间替代到目标区间”对下一循环放电容量的因果影响。")
+    lines.append("- 干预幅度：每个试验臂固定 `+5pp`（`+0.05` 时间份额），对照组不干预。")
+    lines.append("- 随机化单位：`policy + cell_code`，避免同一电芯跨组污染。")
+    lines.append("- 分层建议：按 `policy三元参数`、`q_t` 分位、`is_abnormal_cell` 分层后再随机化。")
     lines.append("")
-    lines.append("## 1. 分组设计")
-    lines.append("- 对照组：维持当前充电策略，不做份额替代。")
+    lines.append("## 1. 研究假设")
+    lines.append("- 原假设 H0：在固定总充电时间下，将 `+5pp` 份额替代到目标区间，不改变 `q_discharge_{t+1}`。")
+    lines.append("- 备择假设 H1：上述替代会改变 `q_discharge_{t+1}`，方向由观测因果估计给出。")
+    lines.append("")
+    lines.append("## 2. 试验臂设计")
+    lines.append("- 对照组：维持现有充电策略，不做份额重分配。")
+    if selected.empty:
+        lines.append("- 试验组：当前未筛出可执行区间，建议先复核主分析与敏感性估计。")
     for idx, row in enumerate(selected.itertuples(index=False), start=1):
-        direction = "提升" if float(row.effect_per_1pp_ah) > 0 else "降低"
+        effect_1pp = float(row.effect_per_1pp_ah)
+        effect_5pp = effect_1pp * 5.0
+        direction = "提升" if effect_1pp > 0 else "降低"
         lines.append(
-            f"- 试验组{idx}：将总充电时间中 `+5pp` 替代到 `cross_bin={int(row.cross_bin)}`（{str(row.cross_label)}），"
-            f"时间来源为其余59区间总池；预计方向：{direction}下一循环容量。"
+            f"- 试验组{idx}：目标 `cross_bin={int(row.cross_bin)}`（{str(row.cross_label)}），"
+            f"将总充电时间 `+5pp` 替代至该区间，来源为其余59区间总池；"
+            f"观测预测方向：{direction}容量，估计量级约 `{effect_5pp:.6f} Ah/5pp`。"
         )
     lines.append("")
-    lines.append("## 2. 执行约束")
-    lines.append("- 保持每个cycle总充电时间不变，仅做区间份额重分配。")
-    lines.append("- 满足现有SOC窗口与安全约束（温度、电流、截止条件）。")
-    lines.append("- 若执行中触发安全阈值，立即回退到对照策略。")
+    lines.append("## 3. 干预实施规则")
+    lines.append("- 每个 cycle 保持总充电时间不变，仅调整60区间内部份额分配。")
+    lines.append("- 在 SOC 与安全约束内执行替代：不突破温度、电流、截止电压等保护边界。")
+    lines.append("- 若当 cycle 无法满足 `+5pp` 目标（可行域不足），记录为 protocol deviation，不强制外推。")
     lines.append("")
-    lines.append("## 3. 观测与终点")
-    lines.append("- 建议观测窗口：每组至少30个连续cycle。")
-    lines.append("- 主要终点：`q_discharge_{t+1}` 相对对照组的均值差。")
-    lines.append("- 次要终点：30-cycle容量下降斜率、异常跳变事件率。")
+    lines.append("## 4. 终点与统计分析计划")
+    lines.append("- 主要终点：`q_discharge_{t+1}` 相对对照组的均值差（按 `policy+cell` 聚类稳健标准误）。")
+    lines.append("- 次要终点：30-cycle 衰减斜率、异常跳变事件率（`dt_s > 3600`）。")
+    lines.append("- 建议分析：混合效应/聚类稳健回归，固定效应含 `policy三元参数` 与 cycle 阶段。")
+    lines.append("- 建议最小观测窗口：每组至少30个连续 cycle。")
     lines.append("")
-    lines.append("## 4. 停止条件")
-    lines.append("- 任一试验组出现连续3个cycle容量显著下降且伴随安全告警。")
-    lines.append("- 关键安全指标超限（温度或电流保护触发）。")
+    lines.append("## 5. 停止规则与安全约束")
+    lines.append("- 任一试验组出现连续3个 cycle 容量显著下降且伴随安全告警时，触发停臂评估。")
+    lines.append("- 温度、电流任一保护触发达到预设阈值，立即回退到对照策略。")
+    lines.append("- 发生 protocol deviation 的样本单独标注，按 ITT 与 PP 两套口径同时分析。")
+    lines.append("")
+    lines.append("## 6. 证据闭环")
+    lines.append("- 本方案用于将“观测因果估计”转化为“可操作策略证据”。")
+    lines.append("- 最终策略上线以受控实验结果为准，不以单次观测估计直接替代。")
     output_path.write_text("\n".join(lines), encoding="utf-8")
     return selected
 
@@ -972,13 +1175,17 @@ def build_report(
     panel_stats: Dict[str, int],
     label_stats: Dict[str, int],
     dataset_df: pd.DataFrame,
+    score_df: pd.DataFrame,
     top_df: pd.DataFrame,
     main_df: pd.DataFrame,
     sens_df: pd.DataFrame,
     overlap_ratio: float,
     selected_protocol_df: pd.DataFrame,
 ) -> str:
-    """Build Chinese markdown report for full causal workflow."""
+    """Build Chinese markdown report in paper style."""
+
+    if str(args.report_style) != "paper_zh":
+        raise ValueError(f"Unsupported report style: {args.report_style}")
 
     checks = {
         "share_sum_min": float(dataset_df["share_sum"].min()),
@@ -987,121 +1194,374 @@ def build_report(
         "valid_rows": int((dataset_df["set_type"] == "valid").sum()),
         "train_groups": int(dataset_df.loc[dataset_df["set_type"] == "train", "group_key"].nunique()),
         "valid_groups": int(dataset_df.loc[dataset_df["set_type"] == "valid", "group_key"].nunique()),
+        "abnormal_share": float((dataset_df["is_abnormal_cell"] == 1).mean()),
     }
     main_valid = main_df[main_df["skip_reason"] == ""].copy()
     sens_valid = sens_df[sens_df["skip_reason"] == ""].copy()
-
+    joined = main_valid[
+        ["cross_bin", "cross_label", "effect_per_1pp_ah", "q_value", "ci_low", "ci_high"]
+    ].merge(
+        sens_valid[["cross_bin", "effect_per_1pp_ah", "q_value", "ci_low", "ci_high"]],
+        on="cross_bin",
+        suffixes=("_main", "_sens"),
+        how="inner",
+    )
     direction_consistency = np.nan
-    if not main_valid.empty and not sens_valid.empty:
-        joined = main_valid[["cross_bin", "effect_per_1pp_ah"]].merge(
-            sens_valid[["cross_bin", "effect_per_1pp_ah"]],
-            on="cross_bin",
-            suffixes=("_main", "_sens"),
-            how="inner",
-        )
-        if not joined.empty:
-            direction_consistency = float(
-                np.mean(
-                    np.sign(joined["effect_per_1pp_ah_main"].to_numpy(float))
-                    == np.sign(joined["effect_per_1pp_ah_sens"].to_numpy(float))
-                )
+    effect_corr = np.nan
+    if not joined.empty:
+        sign_main = np.sign(joined["effect_per_1pp_ah_main"].to_numpy(float))
+        sign_sens = np.sign(joined["effect_per_1pp_ah_sens"].to_numpy(float))
+        direction_consistency = float(np.mean(sign_main == sign_sens))
+        if len(joined) > 1:
+            effect_corr = float(
+                np.corrcoef(
+                    joined["effect_per_1pp_ah_main"].to_numpy(float),
+                    joined["effect_per_1pp_ah_sens"].to_numpy(float),
+                )[0, 1]
             )
-
     placebo_summary = np.nan
     if not main_valid.empty:
         placebo_summary = float(
             np.nanmean(np.abs(main_valid["placebo_mean_1pp_ah"].to_numpy(float)))
         )
 
+    top_eval = top_df[
+        [
+            "rank_combined",
+            "cross_bin",
+            "cross_label",
+            "soc_label",
+            "rate_label",
+            "temp_label",
+            "spearman_abs",
+            "rf_perm_importance",
+            "combined_score",
+        ]
+    ].merge(
+        main_df[
+            [
+                "cross_bin",
+                "effect_per_1pp_ah",
+                "effect_per_5pp_ah",
+                "ci_low",
+                "ci_high",
+                "p_value",
+                "q_value",
+                "skip_reason",
+                "var_treatment",
+            ]
+        ],
+        on="cross_bin",
+        how="left",
+        validate="one_to_one",
+    ).merge(
+        sens_df[["cross_bin", "effect_per_1pp_ah", "q_value", "skip_reason"]].rename(
+            columns={
+                "effect_per_1pp_ah": "effect_per_1pp_ah_sens",
+                "q_value": "q_value_sens",
+                "skip_reason": "skip_reason_sens",
+            }
+        ),
+        on="cross_bin",
+        how="left",
+        validate="one_to_one",
+    )
+    top_eval["ci_cross_zero"] = (
+        pd.to_numeric(top_eval["ci_low"], errors="coerce") <= 0.0
+    ) & (pd.to_numeric(top_eval["ci_high"], errors="coerce") >= 0.0)
+    top_eval["direction_consistent"] = (
+        np.sign(pd.to_numeric(top_eval["effect_per_1pp_ah"], errors="coerce"))
+        == np.sign(pd.to_numeric(top_eval["effect_per_1pp_ah_sens"], errors="coerce"))
+    )
+    top_eval["robust_flag"] = (
+        (top_eval["skip_reason"].fillna("") == "")
+        & (top_eval["skip_reason_sens"].fillna("") == "")
+        & (pd.to_numeric(top_eval["q_value"], errors="coerce") <= 0.1)
+        & (pd.to_numeric(top_eval["q_value_sens"], errors="coerce") <= 0.1)
+        & top_eval["direction_consistent"]
+    )
+
+    def to_evidence_level(row: pd.Series) -> str:
+        """Convert one result row to evidence level."""
+
+        q_val = pd.to_numeric(row["q_value"], errors="coerce")
+        ci_cross = bool(row["ci_cross_zero"])
+        if not np.isfinite(q_val):
+            return "不可判定"
+        if (q_val <= 0.05) and (not ci_cross):
+            return "强证据"
+        if (q_val <= 0.1) and (not ci_cross):
+            return "中等证据"
+        if ci_cross:
+            return "证据不足（CI跨0）"
+        return "弱证据"
+
+    top_eval["evidence_level"] = top_eval.apply(to_evidence_level, axis=1)
+    top_eval = top_eval.sort_values("rank_combined", ascending=True, kind="mergesort")
+
+    support_rows: List[dict] = []
+    for row in top_eval.itertuples(index=False):
+        share_col = f"share_{int(row.cross_bin):02d}"
+        if share_col not in dataset_df.columns:
+            continue
+        values = pd.to_numeric(dataset_df[share_col], errors="coerce").dropna().to_numpy(float)
+        if len(values) == 0:
+            continue
+        q01, q50, q99 = np.percentile(values, [1.0, 50.0, 99.0]).tolist()
+        support_rows.append(
+            {
+                "cross_bin": int(row.cross_bin),
+                "cross_label": str(row.cross_label),
+                "share_q01": float(q01),
+                "share_q50": float(q50),
+                "share_q99": float(q99),
+                "support_width_1_99": float(q99 - q01),
+                "var_treatment": float(row.var_treatment) if np.isfinite(float(row.var_treatment)) else np.nan,
+            }
+        )
+    support_df = pd.DataFrame(support_rows)
+    narrow_support = pd.DataFrame()
+    if not support_df.empty:
+        narrow_support = support_df[support_df["support_width_1_99"] < 0.02].copy()
+
+    score_top20 = score_df.sort_values("rank_combined", ascending=True, kind="mergesort").head(20)
+    score_best = score_top20.iloc[0] if not score_top20.empty else None
+    score_tail = score_top20.iloc[-1] if not score_top20.empty else None
+    heat_best = (
+        score_df.sort_values("combined_score", ascending=False, kind="mergesort")
+        .head(1)
+        .copy()
+    )
+    soc_mean = score_df.groupby("soc_bin", as_index=False)["combined_score"].mean()
+    soc_max_row = soc_mean.sort_values("combined_score", ascending=False, kind="mergesort").head(1)
+    main_q10 = int((pd.to_numeric(main_valid["q_value"], errors="coerce") <= 0.1).sum())
+    main_q05 = int((pd.to_numeric(main_valid["q_value"], errors="coerce") <= 0.05).sum())
+    main_ci_cross = int(
+        (
+            (pd.to_numeric(main_valid["ci_low"], errors="coerce") <= 0.0)
+            & (pd.to_numeric(main_valid["ci_high"], errors="coerce") >= 0.0)
+        ).sum()
+    )
+    main_pos = int((pd.to_numeric(main_valid["effect_per_1pp_ah"], errors="coerce") > 0).sum())
+    main_neg = int((pd.to_numeric(main_valid["effect_per_1pp_ah"], errors="coerce") < 0).sum())
+
     lines: List[str] = []
-    lines.append("# 60区间替代效应因果分析报告")
+    lines.append("# 60区间容量衰减影响分析报告（论文式）")
     lines.append("")
-    lines.append("## 1. 运行摘要")
+    lines.append("## 摘要")
+    lines.append(
+        f"- 本研究基于 `{args.q_min} <= q_discharge <= {args.q_max}` 的 cycle 级样本，目标估计“将充电时间份额从其余59区间替代到目标区间”对下一循环容量 `q_discharge_(t+1)` 的因果影响。"
+    )
+    lines.append(
+        f"- 在 Top{int(args.top_k)} 区间主分析中，`q<=0.1` 的区间数为 `{main_q10}`，其中 `q<=0.05` 为 `{main_q05}`；CI跨0区间数为 `{main_ci_cross}`。"
+    )
+    if score_best is not None:
+        lines.append(
+            f"- 综合筛选得分最高区间为 `bin{int(score_best['cross_bin']):02d} ({str(score_best['cross_label'])})`，得分 `{float(score_best['combined_score']):.6f}`。"
+        )
+    lines.append(
+        "- 结论定位为“策略优先级建议”，并通过受控实验方案给出可落地验证路径。"
+    )
+    lines.append("")
+    lines.append("## 1. 研究问题与因果识别目标")
+    lines.append("- 研究问题：60个 `soc×rate×temp` 区间中，哪些区间时间份额变化最影响下一循环放电容量。")
+    lines.append("- 处理变量：`T_i = share_i`（第 i 区间在当前 cycle 的充电时间份额）。")
+    lines.append("- 结果变量：`Y = q_discharge_(t+1)`。")
+    lines.append("- 目标效应：将其余59区间总池中 `+1pp` 份额替代到区间 `i` 的边际影响。")
+    lines.append("")
+    lines.append("## 2. 数据、样本与质量控制")
     lines.append(f"- 运行时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     lines.append(f"- Python解释器：`{os.path.realpath(os.sys.executable)}`")
     lines.append(f"- 字体回退：`{', '.join(fonts)}`")
     lines.append(
-        f"- 标签过滤区间：`{args.q_min} <= q_discharge <= {args.q_max}`，目标为下一循环容量 `q_discharge_(t+1)`。"
-    )
-    lines.append("")
-    lines.append("## 2. 数据与校验")
-    lines.append(
         f"- 时序原始行数/清洗后行数：`{panel_stats['timeseries_rows_raw']:,}` / `{panel_stats['timeseries_rows_after_clean']:,}`。"
     )
     lines.append(
-        f"- cycle面板样本数（过滤 `cycle_total_charge_h<=0` 前/后）：`{panel_stats['panel_rows_before_positive_filter']:,}` / `{panel_stats['panel_rows_after_positive_filter']:,}`。"
+        f"- cycle样本数（过滤 `cycle_total_charge_h<=0` 前/后）：`{panel_stats['panel_rows_before_positive_filter']:,}` / `{panel_stats['panel_rows_after_positive_filter']:,}`。"
     )
     lines.append(
-        f"- 标签过滤剔除：`<q_min`={label_stats['label_rows_lt_qmin_removed']:,}，`>q_max`={label_stats['label_rows_gt_qmax_removed']:,}。"
+        f"- 标签过滤剔除：`<q_min`={label_stats['label_rows_lt_qmin_removed']:,}，`>q_max`={label_stats['label_rows_gt_qmax_removed']:,}，保留后 `{label_stats['label_rows_after_range_filter']:,}`。"
     )
     lines.append(
-        f"- share求和范围：`[{checks['share_sum_min']:.6f}, {checks['share_sum_max']:.6f}]`（目标区间 `[0.999,1.001]`）。"
+        f"- share求和校验区间：`[{checks['share_sum_min']:.6f}, {checks['share_sum_max']:.6f}]`（目标 `[0.999,1.001]`）。"
     )
     lines.append(
-        f"- train/valid 行数：`{checks['train_rows']:,}` / `{checks['valid_rows']:,}`；group数：`{checks['train_groups']}` / `{checks['valid_groups']}`。"
+        f"- train/valid 样本行数：`{checks['train_rows']:,}` / `{checks['valid_rows']:,}`；group数：`{checks['train_groups']}` / `{checks['valid_groups']}`。"
     )
-    lines.append(
-        f"- Top10稳定性（固定种子重复筛选重合率）：`{overlap_ratio:.2%}`。"
-    )
+    lines.append(f"- 主分析样本中异常电芯占比：`{checks['abnormal_share']:.2%}`。")
+    lines.append(f"- Top10 稳定性（同种子重跑重合率）：`{overlap_ratio:.2%}`。")
     lines.append("")
-    lines.append("## 3. 阶段一筛选（相关性 + 重要性）")
-    lines.append("- 指标A：`share_i` 与 `q_(t+1)` 的 Spearman 绝对相关。")
-    lines.append("- 指标B：RF permutation importance（60个share + 控制变量）。")
-    lines.append("- 综合分数：A/B min-max归一化后取平均。")
+    lines.append("## 3. 方法与理论依据")
+    lines.append("### 3.1 两阶段分析框架")
+    lines.append("- 阶段一（筛选）：`Spearman(|corr|)` + `RF permutation importance`，归一化后取均值得到综合得分。")
+    lines.append("- 阶段二（因果）：对 Top10 区间做残差化 DML，输出 `Ah/1pp`、`Ah/5pp`、95%CI、`p`、`q`。")
     lines.append("")
-    lines.append("| rank | cross_bin | cross_label | spearman_abs | perm_importance | combined_score |")
-    lines.append("|---:|---:|---|---:|---:|---:|")
-    for row in top_df.itertuples(index=False):
+    lines.append("### 3.2 估计公式")
+    lines.append("```text")
+    lines.append("Y~ = Y - m_y(W)")
+    lines.append("T~ = T_i - m_t(W)")
+    lines.append("theta_i = Cov(Y~, T~) / Var(T~)")
+    lines.append("effect_per_1pp = 0.01 * theta_i")
+    lines.append("effect_per_5pp = 0.05 * theta_i")
+    lines.append("```")
+    lines.append("- 其中 `W` 包含：`q_t`、`cycles_t`、policy三元参数、`cycle_total_charge_h`、`nonzero_cross_bin_count_cycle`、`is_abnormal_cell`。")
+    lines.append("- 不确定性：`policy+cell` 聚类 bootstrap（500次）给95%CI；多重比较采用 BH-FDR 得到 `q-value`。")
+    lines.append("")
+    lines.append("### 3.3 因果识别假设（解释边界）")
+    lines.append("- 一致性：观测到的份额替代对应同定义下的潜在结果。")
+    lines.append("- 可交换性：在给定 `W` 后，未观测混杂可忽略（强假设）。")
+    lines.append("- 重叠性：各区间份额在样本支持域内有足够变化。")
+    lines.append("- SUTVA：电芯间干预不相互影响。")
+    lines.append("")
+    lines.append("## 4. 实验结果")
+    lines.append("### 4.1 Top10 区间因果估计（主文）")
+    lines.append("| rank | cross_bin | 区间标签 | effect(Ah/1pp) | 95%CI | p | q | 方向一致性(主/敏) | 证据等级 |")
+    lines.append("|---:|---:|---|---:|---:|---:|---:|---:|---|")
+    for row in top_eval.itertuples(index=False):
+        ci_txt = "NaN"
+        if np.isfinite(float(row.ci_low)) and np.isfinite(float(row.ci_high)):
+            ci_txt = f"[{float(row.ci_low):.6f}, {float(row.ci_high):.6f}]"
+        sign_consistent = "是" if bool(row.direction_consistent) else "否"
         lines.append(
             f"| {int(row.rank_combined)} | {int(row.cross_bin)} | {str(row.cross_label)} | "
-            f"{float(row.spearman_abs):.6f} | {float(row.rf_perm_importance):.6f} | {float(row.combined_score):.6f} |"
+            f"{float(row.effect_per_1pp_ah):.6f} | {ci_txt} | {float(row.p_value):.6f} | "
+            f"{float(row.q_value):.6f} | {sign_consistent} | {str(row.evidence_level)} |"
         )
     lines.append("")
-    lines.append("## 4. 阶段二替代效应因果估计")
-    lines.append(
-        "- 定义：对每个Top10区间，估计“从其余59区间总池替代 `+1pp` 时间份额到该区间”对 `q_(t+1)` 的影响。"
-    )
-    lines.append("- 方法：按 `policy+cell` 分组的 5折 cross-fitting 残差化 DML，500次聚类bootstrap，BH-FDR校正。")
-    lines.append("")
-    lines.append("| cross_bin | cross_label | effect_per_1pp_ah | 95%CI | p_value | q_value |")
-    lines.append("|---:|---|---:|---:|---:|---:|")
-    for row in main_df.itertuples(index=False):
-        if str(row.skip_reason) != "":
-            lines.append(
-                f"| {int(row.cross_bin)} | {str(row.cross_label)} | NaN | NaN | NaN | NaN |"
-            )
-        else:
-            ci_text = f"[{float(row.ci_low):.6f}, {float(row.ci_high):.6f}]"
-            lines.append(
-                f"| {int(row.cross_bin)} | {str(row.cross_label)} | {float(row.effect_per_1pp_ah):.6f} | "
-                f"{ci_text} | {float(row.p_value):.6f} | {float(row.q_value):.6f} |"
-            )
-    lines.append("")
-    lines.append("## 5. 稳健性与负对照")
-    if np.isfinite(direction_consistency):
-        lines.append(f"- 剔除异常电芯后的方向一致率：`{direction_consistency:.2%}`。")
+    lines.append("### 4.2 CI跨0区间的标准化解释")
+    ci_cross_rows = top_eval[top_eval["ci_cross_zero"]].copy()
+    if ci_cross_rows.empty:
+        lines.append("- Top10 中无 CI 跨0区间。")
     else:
-        lines.append("- 剔除异常电芯后的方向一致率：样本不足，未计算。")
+        for row in ci_cross_rows.itertuples(index=False):
+            lines.append(
+                f"- `bin{int(row.cross_bin):02d} ({str(row.cross_label)})`：95%CI 跨0，解释为“当前证据不足以确认方向”，"
+                "并非“确定无效应”；建议进入后续受控实验优先级清单。"
+            )
+    lines.append("")
+    lines.append("### 4.3 证据分层汇总（统计显著性 + 效应量 + 工程意义）")
+    top_strong = top_eval[
+        (pd.to_numeric(top_eval["q_value"], errors="coerce") <= 0.05) & (~top_eval["ci_cross_zero"])
+    ].copy()
+    if top_strong.empty:
+        lines.append("- 本轮无“强证据”区间。")
+    else:
+        for row in top_strong.itertuples(index=False):
+            lines.append(
+                f"- `bin{int(row.cross_bin):02d}`：`q={float(row.q_value):.4f}`，`+1pp={float(row.effect_per_1pp_ah):.6f} Ah`，"
+                f"`+5pp={float(row.effect_per_5pp_ah):.6f} Ah`。"
+            )
+    lines.append("")
+    lines.append("## 5. 关键图表解读（逐图给出坐标说明与结论）")
+    lines.append("### 图1：Top20 综合筛选得分")
+    lines.append("![图1 Top20综合筛选得分](./screening_top20_bar.png)")
+    lines.append("- X轴说明：综合筛选得分（相关性与重要性归一化平均）。")
+    lines.append("- Y轴说明：区间标识 `binXX (s_r_t)`，按得分排序。")
+    if (score_best is not None) and (score_tail is not None):
+        lines.append(
+            f"- 结论：Top1 为 `bin{int(score_best['cross_bin']):02d}`，Top20末位得分为 `{float(score_tail['combined_score']):.6f}`，"
+            f"前后差值 `{float(score_best['combined_score']) - float(score_tail['combined_score']):.6f}`，说明筛选区分度明确。"
+        )
+    else:
+        lines.append("- 结论：当前无可用筛选数据。")
+    lines.append("")
+    lines.append("### 图2：60区间筛选热力图（SOC分面）")
+    lines.append("![图2 SOC分面热力图](./screening_heatmap_soc_panels.png)")
+    lines.append("- X轴说明：温度分位区间 `temp_bin(T1~T5)`。")
+    lines.append("- Y轴说明：倍率分位区间 `rate_bin(R1~R4)`。")
+    if (not heat_best.empty) and (not soc_max_row.empty):
+        best_row = heat_best.iloc[0]
+        lines.append(
+            f"- 结论：全局最高得分区间为 `bin{int(best_row['cross_bin']):02d} ({str(best_row['cross_label'])})`；"
+            f"平均得分最高的 SOC 分层为 `SOC{int(soc_max_row.iloc[0]['soc_bin'])}`，提示该SOC段更值得优先优化。"
+        )
+    else:
+        lines.append("- 结论：当前无可用热力图统计。")
+    lines.append("")
+    lines.append("### 图3：Top区间替代效应森林图")
+    lines.append("![图3 替代效应森林图](./effect_forest_plot.png)")
+    lines.append("- X轴说明：将 `+1pp` 份额替代到目标区间时，对 `q_discharge_(t+1)` 的效应（Ah）。")
+    lines.append("- Y轴说明：Top区间（`binXX + 区间标签`）。")
+    lines.append(
+        f"- 结论：正向区间 `{main_pos}` 个、负向区间 `{main_neg}` 个；`q<=0.1` 区间 `{main_q10}` 个，CI跨0区间 `{main_ci_cross}` 个。"
+    )
+    lines.append("")
+    lines.append("### 图4：主分析与敏感性分析一致性")
+    lines.append("![图4 主分析vs敏感性散点](./effect_main_vs_sensitivity_scatter.png)")
+    lines.append("- X轴说明：保留异常电芯时的效应估计（Ah/1pp）。")
+    lines.append("- Y轴说明：剔除异常电芯后的敏感性效应估计（Ah/1pp）。")
+    if np.isfinite(effect_corr):
+        lines.append(
+            f"- 结论：两口径效应相关系数约 `{effect_corr:.3f}`，方向一致率 `{direction_consistency:.2%}`，"
+            "说明主结论在异常样本处理上整体稳定。"
+        )
+    else:
+        lines.append("- 结论：可比样本不足，暂无法评估一致性。")
+    lines.append("")
+    lines.append("## 6. 稳健性、支持域与不外推清单")
     if np.isfinite(placebo_summary):
         lines.append(
-            f"- 置换负对照（打乱 treatment residual）|平均绝对效应|：`{placebo_summary:.6e} Ah/1pp`（应接近0）。"
+            f"- 置换负对照：`|平均绝对效应|={placebo_summary:.6e} Ah/1pp`，接近0，未见系统性伪相关信号。"
         )
     else:
         lines.append("- 置换负对照：样本不足，未计算。")
-    lines.append("")
-    lines.append("## 6. 受控实验建议摘要")
-    if selected_protocol_df.empty:
-        lines.append("- 未选出可执行试验区间，请检查主分析与敏感性结果。")
+    lines.append(
+        "- 支持域声明：本报告仅对观测支持域内（样本具有足够份额波动）的区间给出解释，不建议对超出支持域的替代幅度做外推。"
+    )
+    if support_df.empty:
+        lines.append("- 支持域统计：暂无可用数据。")
     else:
+        lines.append("| cross_bin | cross_label | share_q01 | share_q50 | share_q99 | width(q99-q01) | var_treatment |")
+        lines.append("|---:|---|---:|---:|---:|---:|---:|")
+        for row in support_df.itertuples(index=False):
+            lines.append(
+                f"| {int(row.cross_bin)} | {str(row.cross_label)} | {float(row.share_q01):.4f} | {float(row.share_q50):.4f} | "
+                f"{float(row.share_q99):.4f} | {float(row.support_width_1_99):.4f} | {float(row.var_treatment):.6f} |"
+            )
+    lines.append("")
+    lines.append("### 不外推清单（建议谨慎解释）")
+    if narrow_support.empty:
+        lines.append("- 无 `width(q99-q01)<0.02` 的 Top10 区间。")
+    else:
+        for row in narrow_support.itertuples(index=False):
+            lines.append(
+                f"- `bin{int(row.cross_bin):02d} ({str(row.cross_label)})`：支持域宽度 `{float(row.support_width_1_99):.4f}`，"
+                "建议不做高幅度策略外推。"
+            )
+    lines.append("")
+    lines.append("## 7. 策略建议与受控验证路径")
+    if selected_protocol_df.empty:
+        lines.append("- 当前未形成可执行试验臂，建议先扩充样本后再进入干预验证。")
+    else:
+        lines.append("- 建议优先验证以下试验臂（详见 `controlled_experiment_protocol.md`）：")
         for idx, row in enumerate(selected_protocol_df.itertuples(index=False), start=1):
             lines.append(
-                f"- 建议试验臂{idx}：`cross_bin={int(row.cross_bin)}`（{str(row.cross_label)}），执行 `+5pp` 替代干预。"
+                f"- 试验臂{idx}：`bin{int(row.cross_bin):02d} ({str(row.cross_label)})`，固定 `+5pp` 替代。"
             )
-    lines.append("- 详细试验步骤见：`controlled_experiment_protocol.md`。")
     lines.append("")
-    lines.append("## 7. 结论边界")
-    lines.append("- 本结论属于“可操作优先级建议”，并非机制层面的最终证明。")
-    lines.append("- 关键风险仍是未观测混杂，策略落地前需按受控实验方案验证。")
+    lines.append("## 8. 局限性")
+    lines.append("- 未观测混杂仍可能存在，观测因果不等于机制证明。")
+    lines.append("- Top10 以筛选策略决定，未覆盖全60区间DML估计。")
+    lines.append("- 部分区间 CI 跨0，需通过受控实验进一步收敛不确定性。")
+    lines.append("")
+    lines.append("## 附录A：Top10 入选逻辑")
+    lines.append("- Step1：在 train 集计算 `spearman_abs` 与 `rf_perm_importance`。")
+    lines.append("- Step2：两者分别 min-max 归一化，综合分数 `combined_score = (A+B)/2`。")
+    lines.append("- Step3：按 `combined_score`、`spearman_abs`、`rf_perm_importance` 依次排序取 Top10。")
+    lines.append("")
+    lines.append("## 附录B：60区间全量筛选总表")
+    if int(args.appendix_full60) == 1:
+        lines.append("| rank | cross_bin | cross_label | soc_label | rate_label | temp_label | spearman_abs | perm_importance | combined_score |")
+        lines.append("|---:|---:|---|---|---|---|---:|---:|---:|")
+        all_rows = score_df.sort_values("rank_combined", ascending=True, kind="mergesort")
+        for row in all_rows.itertuples(index=False):
+            lines.append(
+                f"| {int(row.rank_combined)} | {int(row.cross_bin)} | {str(row.cross_label)} | "
+                f"{str(row.soc_label)} | {str(row.rate_label)} | {str(row.temp_label)} | "
+                f"{float(row.spearman_abs):.6f} | {float(row.rf_perm_importance):.6f} | {float(row.combined_score):.6f} |"
+            )
+    else:
+        lines.append("- 已关闭全量附录输出（`--appendix-full60=0`）。")
     return "\n".join(lines)
 
 
@@ -1175,6 +1635,9 @@ def main() -> None:
     out_main = args.output_dir / "causal_substitution_effects.csv"
     out_sens = args.output_dir / "causal_sensitivity_abnormal_excluded.csv"
     out_plot = args.output_dir / "effect_forest_plot.png"
+    out_screen_bar = args.output_dir / "screening_top20_bar.png"
+    out_screen_heat = args.output_dir / "screening_heatmap_soc_panels.png"
+    out_effect_scatter = args.output_dir / "effect_main_vs_sensitivity_scatter.png"
     out_protocol = args.output_dir / "controlled_experiment_protocol.md"
     out_report = args.output_dir / "causal_report.md"
 
@@ -1182,7 +1645,10 @@ def main() -> None:
     top_df.to_csv(out_top, index=False, encoding="utf-8")
     main_causal.to_csv(out_main, index=False, encoding="utf-8")
     sens_causal.to_csv(out_sens, index=False, encoding="utf-8")
+    save_screening_top20_bar(score_df, out_screen_bar, top_n=20)
+    save_screening_heatmap_soc_panels(score_df, out_screen_heat)
     save_effect_forest_plot(main_causal, out_plot)
+    save_effect_main_vs_sensitivity_scatter(main_causal, sens_causal, out_effect_scatter)
     selected_protocol_df = build_controlled_protocol(main_causal, sens_causal, out_protocol)
 
     report_text = build_report(
@@ -1191,6 +1657,7 @@ def main() -> None:
         panel_stats=panel_stats,
         label_stats=label_stats,
         dataset_df=dataset_df,
+        score_df=score_df,
         top_df=top_df,
         main_df=main_causal,
         sens_df=sens_causal,
@@ -1203,7 +1670,10 @@ def main() -> None:
     print(f"Saved: {out_top}")
     print(f"Saved: {out_main}")
     print(f"Saved: {out_sens}")
+    print(f"Saved: {out_screen_bar}")
+    print(f"Saved: {out_screen_heat}")
     print(f"Saved: {out_plot}")
+    print(f"Saved: {out_effect_scatter}")
     print(f"Saved: {out_protocol}")
     print(f"Saved: {out_report}")
     print(

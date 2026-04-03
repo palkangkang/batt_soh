@@ -1,0 +1,4 @@
+﻿interface:
+  display_name: "Voltage Correlation No Policy"
+  short_description: "Analyze charge/discharge interval-feature correlations without policy triplet"
+  default_prompt: "Run no-policy correlation analysis for charge and discharge voltage-interval features against discharge capacity, then generate one unified markdown report with comparable metrics."

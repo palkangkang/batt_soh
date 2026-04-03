@@ -1,0 +1,17 @@
+variable_display,non_null_samples,variable,variable_type,coverage_ratio_vs_life,range_low
+"[2.85,2.80]",24069,discharge_delta_ah_2p85_2p80,discharge_feature,0.1711597676055837,2.85
+"[2.90,2.85)",18026,discharge_delta_ah_2p90_2p85,discharge_feature,0.12818671198879272,2.9
+"[2.95,2.90)",10560,discharge_delta_ah_2p95_2p90,discharge_feature,0.07509440134259687,2.95
+"[3.00,2.95)",25770,discharge_delta_ah_3p00_2p95,discharge_feature,0.18325593964003042,3.0
+"[3.05,3.00)",73743,discharge_delta_ah_3p05_3p00,discharge_feature,0.5244021248302199,3.05
+"[3.10,3.05)",132103,discharge_delta_ah_3p10_3p05,discharge_feature,0.9394124716440412,3.1
+"[3.15,3.10)",133083,discharge_delta_ah_3p15_3p10,discharge_feature,0.9463814596474261,3.15
+"[3.20,3.15)",38497,discharge_delta_ah_3p20_3p15,discharge_feature,0.27376033792480603,3.2
+"[3.25,3.20)",16232,discharge_delta_ah_3p25_3p20,discharge_feature,0.11542919721524929,3.25
+"[3.30,3.25)",24079,discharge_delta_ah_3p30_3p25,discharge_feature,0.17123087972806725,3.3
+"[3.35,3.30)",22276,discharge_delta_ah_3p35_3p30,discharge_feature,0.15840936404428863,3.35
+"[3.40,3.35)",19344,discharge_delta_ah_3p40_3p35,discharge_feature,0.13755928973212064,3.4
+"[3.45,3.40)",4802,discharge_delta_ah_3p45_3p40,discharge_feature,0.03414804121658619,3.45
+"[3.50,3.45)",5,discharge_delta_ah_3p50_3p45,discharge_feature,3.555606124175988e-05,3.5
+"[3.55,3.50)",5,discharge_delta_ah_3p55_3p50,discharge_feature,3.555606124175988e-05,3.55
+"[3.60,3.55)",1,discharge_delta_ah_3p60_3p55,discharge_feature,7.111212248351976e-06,3.6
