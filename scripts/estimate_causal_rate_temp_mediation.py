@@ -228,6 +228,18 @@ def parse_args() -> argparse.Namespace:
         help="Outcome horizon H in Y_t+H.",
     )
     parser.add_argument(
+        "--q-min",
+        type=float,
+        default=0.3,
+        help="Lower bound for q_discharge range filter.",
+    )
+    parser.add_argument(
+        "--q-max",
+        type=float,
+        default=1.3,
+        help="Upper bound for q_discharge range filter.",
+    )
+    parser.add_argument(
         "--exclude-policy-prefix",
         type=str,
         default="VARCHARGE",
@@ -476,6 +488,8 @@ def build_mediation_dataset(
     window_mean_qref_cycles: int,
     window_mean_clip_low: float,
     window_mean_clip_high: float,
+    q_min: float,
+    q_max: float,
     exclude_policy_prefix: str,
     encoding: str,
 ) -> tuple[pd.DataFrame, dict[str, float]]:
@@ -487,6 +501,8 @@ def build_mediation_dataset(
     _validate_quantiles(temperature_clip_low, temperature_clip_high, "temperature_clip_quantile")
     if temperature_min >= temperature_max:
         raise ValueError("temperature_min must be < temperature_max.")
+    if q_min >= q_max:
+        raise ValueError("q_min must be < q_max.")
 
     life_df = pd.read_csv(
         life_path,
@@ -501,12 +517,22 @@ def build_mediation_dataset(
     life_df = _to_numeric(life_df, ["cycles", "q_discharge"])
     policy_df = _to_numeric(policy_df, ["initial_c_rate", "switch_soc_percent", "post_switch_c_rate"])
 
+    life_rows_before_dropna = int(len(life_df))
     life_df = life_df.dropna(subset=["policy", "cell_code", "cycles", "q_discharge"]).copy()
-    life_df = life_df.loc[life_df["q_discharge"] > 0].copy()
+    life_rows_after_dropna = int(len(life_df))
     life_df["cycles"] = life_df["cycles"].astype(int)
     if exclude_policy_prefix:
         life_df = life_df.loc[~life_df["policy"].astype(str).str.startswith(exclude_policy_prefix)].copy()
         policy_df = policy_df.loc[~policy_df["policy"].astype(str).str.startswith(exclude_policy_prefix)].copy()
+    life_rows_after_policy_filter = int(len(life_df))
+    label_rows_lt_qmin_removed = int((life_df["q_discharge"] < float(q_min)).sum())
+    label_rows_gt_qmax_removed = int((life_df["q_discharge"] > float(q_max)).sum())
+    life_df = life_df.loc[
+        (life_df["q_discharge"] >= float(q_min)) & (life_df["q_discharge"] <= float(q_max))
+    ].copy()
+    life_rows_after_range_filter = int(len(life_df))
+    if life_df.empty:
+        raise ValueError("No life rows left after q_discharge range filtering.")
 
     policy_df = policy_df.dropna(subset=["policy"]).drop_duplicates(subset=["policy"]).copy()
 
@@ -596,6 +622,14 @@ def build_mediation_dataset(
     )
 
     diag: dict[str, float] = {
+        "q_min_filter": float(q_min),
+        "q_max_filter": float(q_max),
+        "label_rows_before_dropna": float(life_rows_before_dropna),
+        "label_rows_after_dropna": float(life_rows_after_dropna),
+        "label_rows_after_policy_filter": float(life_rows_after_policy_filter),
+        "label_rows_lt_qmin_removed": float(label_rows_lt_qmin_removed),
+        "label_rows_gt_qmax_removed": float(label_rows_gt_qmax_removed),
+        "label_rows_after_range_filter": float(life_rows_after_range_filter),
         "rows_before_dropna": float(merged.shape[0]),
         "q_future_availability": float(merged["q_tph"].notna().mean()),
         "temp_t_availability": float(merged["temp_t"].notna().mean()),
@@ -1411,6 +1445,11 @@ def render_markdown_report(
 
     cde_keys = [f"cde_temp_plus_{str(float(d)).replace('.', 'p')}" for d in cde_deltas]
     cde_display = [f"+{_format_float(float(d), 1)}°C" for d in cde_deltas]
+    primary_diag = data_diag_df.loc[
+        (data_diag_df["scenario"] == BASELINE_SCENARIO)
+        & (data_diag_df["treatment_mode"] == PRIMARY_TREATMENT_MODE)
+    ].copy()
+    diag_row = primary_diag.iloc[0] if not primary_diag.empty else None
 
     lines: list[str] = []
     lines.append("# 因果路径分解报告：固定阈值倍率分段（方案A）")
@@ -1420,6 +1459,13 @@ def render_markdown_report(
     lines.append(f"- Python解释器：`{sys.executable}`")
     lines.append(f"- 结果定义：`Y=(Q_t-Q_(t+H))/Q_t`，其中 `H={args.horizon_cycles}`")
     lines.append("- 主口径：`window_mean`（窗口真实平均充电倍率）。")
+    lines.append(f"- 标签过滤区间：`{_format_float(args.q_min, 1)} <= q_discharge <= {_format_float(args.q_max, 1)}`。")
+    if diag_row is not None:
+        lines.append(
+            f"- 标签过滤剔除：`<q_min`={int(diag_row['label_rows_lt_qmin_removed'])}，"
+            f"`>q_max`={int(diag_row['label_rows_gt_qmax_removed'])}，"
+            f"保留 `{int(diag_row['label_rows_after_range_filter'])}`。"
+        )
     lines.append("- 路径分解：`TE = NDE + NIE`。")
     lines.append("- 中介时序：`R_t -> T_(t+1) -> Y_(t+H)`。")
     lines.append(
@@ -1678,6 +1724,8 @@ def main() -> int:
             window_mean_qref_cycles=args.window_mean_qref_cycles,
             window_mean_clip_low=args.window_mean_clip_quantile_low,
             window_mean_clip_high=args.window_mean_clip_quantile_high,
+            q_min=args.q_min,
+            q_max=args.q_max,
             exclude_policy_prefix=args.exclude_policy_prefix,
             encoding=args.encoding,
         )
@@ -1749,6 +1797,8 @@ def main() -> int:
             window_mean_qref_cycles=args.window_mean_qref_cycles,
             window_mean_clip_low=args.window_mean_clip_quantile_low,
             window_mean_clip_high=args.window_mean_clip_quantile_high,
+            q_min=args.q_min,
+            q_max=args.q_max,
             exclude_policy_prefix=args.exclude_policy_prefix,
             encoding=args.encoding,
         )
@@ -1775,6 +1825,8 @@ def main() -> int:
             window_mean_qref_cycles=args.window_mean_qref_cycles,
             window_mean_clip_low=args.window_mean_clip_quantile_low,
             window_mean_clip_high=args.window_mean_clip_quantile_high,
+            q_min=args.q_min,
+            q_max=args.q_max,
             exclude_policy_prefix=args.exclude_policy_prefix,
             encoding=args.encoding,
         )

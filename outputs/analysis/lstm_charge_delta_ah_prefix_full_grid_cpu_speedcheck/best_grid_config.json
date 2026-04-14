@@ -1,0 +1,15 @@
+{
+  "trial_id": 1,
+  "sequence_mode": "prefix_full",
+  "window_size": null,
+  "hidden_size": 64,
+  "learning_rate": 0.001,
+  "num_layers": 1,
+  "dropout": 0.1,
+  "valid_rmse": 0.1446598357330802,
+  "valid_mae": 0.11536522209644318,
+  "valid_r2": -6.571550369262695,
+  "best_epoch": 3,
+  "checkpoint_path": "outputs\\analysis\\lstm_charge_delta_ah_prefix_full_grid_cpu_speedcheck\\checkpoints\\trial_001.pt",
+  "timestamp": "2026-04-08 16:33:24"
+}

@@ -160,3 +160,35 @@
 ### C6. `charge_aging_path_timeseries_abnormal_cells.csv`
 
 `timeseries` 的异常电芯子集，列结构与 `charge_aging_path_timeseries.csv` 完全一致，仅包含 `is_abnormal_cell=1` 的电芯记录，用于异常样本单独分析。
+
+## D. 放电 dQ/dV 峰特征文件字段定义
+
+适用文件：
+
+- `data/processed/discharge_dqdv_peak_features.csv`
+- `data/processed/discharge_dqdv_peak_features_smoke.csv`（冒烟测试子集，列结构一致）
+
+该文件按 `policy + cell_code + cycles` 粒度保存放电状态下 dQ/dV 曲线的统计峰参数，不保存原始 dQ/dV 全曲线。
+
+| 列名 | 中文名称 | English Name | 单位 | 详细说明 |
+|---|---|---|---|---|
+| `policy` | 策略名称 | Test Policy | 无 | 测试工况/控制策略标识，来源于原始 `cycles_*.csv`。 |
+| `cell_code` | 电芯编号 | Cell Code | 无 | 电芯唯一标识。 |
+| `cycles` | 循环序号 | Cycle Index | 次（count） | 当前记录对应循环编号。 |
+| `n_points_window` | 电压窗口有效点数 | Window Point Count | 点（count） | 电压窗口内（默认 `3.6V~2.8V`）且 `flag_dischg=1` 的有效时序点数量。 |
+| `n_points_dqdv` | 有效导数点数 | Valid dQ/dV Point Count | 点（count） | 通过差分与方向性过滤后用于构建 dQ/dV 的离散点数量。 |
+| `n_peaks_detected` | 识别峰数量 | Detected Peak Count | 个（count） | 该循环识别到的有效峰数量（输出仅保留 `>=1` 的循环）。 |
+| `peak1_voltage_v` | 主峰电压位置 | Peak-1 Voltage Position | 伏特（V） | 主峰（最显著峰）对应电压位置。 |
+| `peak1_height_dqdv` | 主峰峰高 | Peak-1 Height (dQ/dV) | Ah/V | 主峰处 dQ/dV 值，保留原始符号（放电常见为负值）。 |
+| `peak1_area` | 主峰面积 | Peak-1 Area | Ah | 主峰局部积分面积（保留原始符号）。 |
+| `peak1_prominence` | 主峰显著性 | Peak-1 Prominence | Ah/V | 峰显著性指标（基于 `-dQ/dV` 峰检测得到）。 |
+| `peak1_width_v` | 主峰半高宽 | Peak-1 Width | 伏特（V） | 峰的半高宽换算到电压轴后的宽度。 |
+| `peak2_voltage_v` ~ `peak3_width_v` | 次峰参数 | Peak-2/3 Parameters | 同上 | 第二、第三显著峰参数；若不足 3 个峰，对应列为空。 |
+
+提取规则摘要：
+
+1. 输入范围：递归读取 `data/raw/**/cycles_*.csv`，仅使用放电段（`flag_dischg=1`）并按 `ts` 排序。
+2. dQ/dV 构建：使用 `ah_dischg` 与电压 `V` 做离散差分，保留原始 dQ/dV 符号。
+3. 边界与有效性：默认严格阈值，要求窗口点数不少于 `50`，有效 dQ/dV 点不少于 `10`。
+4. 峰识别：采用 SciPy（Savitzky-Golay 平滑 + `find_peaks`），并仅输出每循环 Top-3 峰统计。
+5. 过滤原则：未识别到有效峰的 `policy + cell_code + cycles` 组合不写入输出文件。

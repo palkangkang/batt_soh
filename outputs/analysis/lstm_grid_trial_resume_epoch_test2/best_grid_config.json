@@ -1,0 +1,15 @@
+{
+  "trial_id": 1,
+  "sequence_mode": "prefix_full",
+  "window_size": null,
+  "hidden_size": 64,
+  "learning_rate": 0.001,
+  "num_layers": 1,
+  "dropout": 0.1,
+  "valid_rmse": 0.07670152969123412,
+  "valid_mae": 0.06355338543653488,
+  "valid_r2": -4.553676605224609,
+  "best_epoch": 17,
+  "checkpoint_path": "outputs\\analysis\\lstm_grid_trial_resume_epoch_test2\\checkpoints\\trial_001.pt",
+  "timestamp": "2026-04-13 18:25:54"
+}

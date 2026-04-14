@@ -1,0 +1,12 @@
+{
+  "trial_id": 1,
+  "window_size": 20,
+  "hidden_size": 64,
+  "learning_rate": 0.001,
+  "valid_rmse": 0.026402643877319536,
+  "valid_mae": 0.01909821107983589,
+  "valid_r2": 0.7452337741851807,
+  "best_epoch": 15,
+  "checkpoint_path": "C:\\Users\\pal\\projects\\batt_soh\\outputs\\analysis\\lstm_charge_delta_ah_grid_tuning_cpu\\checkpoints\\trial_001.pt",
+  "timestamp": "2026-04-07 18:00:39"
+}

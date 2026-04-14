@@ -1,0 +1,38 @@
+{
+  "current_epoch": 2,
+  "total_epochs": 2,
+  "best_epoch": 2,
+  "best_valid_loss": 0.5412950068712234,
+  "no_improve_count": 0,
+  "finished": true,
+  "last_update": "2026-04-10 17:24:56",
+  "args_signature": "671f90ec59b3f4896cae6cbeb2ad420aef0bedd46069a4e9bd57fe91aa5420a2",
+  "signature_payload": {
+    "sequence_mode": "prefix_full",
+    "device": "cpu",
+    "max_train_windows": 512,
+    "max_valid_windows": 256,
+    "hidden_size": 64,
+    "num_layers": 1,
+    "dropout": 0.1,
+    "learning_rate": 0.001,
+    "batch_size": 64,
+    "seed": 20260407
+  },
+  "valid_metrics": {
+    "set_type": "valid",
+    "n_windows": 256,
+    "mse": 0.541295051574707,
+    "rmse": 0.7357275661375663,
+    "mae": 0.7335144281387329,
+    "r2": -200.83282470703125
+  },
+  "train_metrics": {
+    "set_type": "train",
+    "n_windows": 512,
+    "mse": 0.5308311581611633,
+    "rmse": 0.7285816070703153,
+    "mae": 0.7265660166740417,
+    "r2": -206.15109252929688
+  }
+}
