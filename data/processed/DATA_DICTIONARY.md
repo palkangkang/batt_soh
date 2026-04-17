@@ -165,30 +165,78 @@
 
 适用文件：
 
-- `data/processed/discharge_dqdv_peak_features.csv`
-- `data/processed/discharge_dqdv_peak_features_smoke.csv`（冒烟测试子集，列结构一致）
+- `data/processed/discharge_dqdv_peak_features_sample10.csv`（抽样 10 周期）
+- `data/processed/discharge_dqdv_curve_points_sample10.csv`（抽样 10 周期点级曲线）
+- `data/processed/discharge_dqdv_extraction_summary_sample10.json`（抽样运行摘要）
+- `data/processed/discharge_dqdv_peak_features_skill_full.csv`（全量统计特征）
+- `data/processed/discharge_dqdv_extraction_summary_skill_full.json`（全量运行摘要）
 
-该文件按 `policy + cell_code + cycles` 粒度保存放电状态下 dQ/dV 曲线的统计峰参数，不保存原始 dQ/dV 全曲线。
+本节口径为“skills 对齐版”提取：按 `policy + cell_code + cycles + state(dischg)` 粒度提取放电 dQ/dV 统计特征，并在抽样阶段额外导出点级曲线表。
 
-| 列名 | 中文名称 | English Name | 单位 | 详细说明 |
-|---|---|---|---|---|
-| `policy` | 策略名称 | Test Policy | 无 | 测试工况/控制策略标识，来源于原始 `cycles_*.csv`。 |
-| `cell_code` | 电芯编号 | Cell Code | 无 | 电芯唯一标识。 |
-| `cycles` | 循环序号 | Cycle Index | 次（count） | 当前记录对应循环编号。 |
-| `n_points_window` | 电压窗口有效点数 | Window Point Count | 点（count） | 电压窗口内（默认 `3.6V~2.8V`）且 `flag_dischg=1` 的有效时序点数量。 |
-| `n_points_dqdv` | 有效导数点数 | Valid dQ/dV Point Count | 点（count） | 通过差分与方向性过滤后用于构建 dQ/dV 的离散点数量。 |
-| `n_peaks_detected` | 识别峰数量 | Detected Peak Count | 个（count） | 该循环识别到的有效峰数量（输出仅保留 `>=1` 的循环）。 |
-| `peak1_voltage_v` | 主峰电压位置 | Peak-1 Voltage Position | 伏特（V） | 主峰（最显著峰）对应电压位置。 |
-| `peak1_height_dqdv` | 主峰峰高 | Peak-1 Height (dQ/dV) | Ah/V | 主峰处 dQ/dV 值，保留原始符号（放电常见为负值）。 |
-| `peak1_area` | 主峰面积 | Peak-1 Area | Ah | 主峰局部积分面积（保留原始符号）。 |
-| `peak1_prominence` | 主峰显著性 | Peak-1 Prominence | Ah/V | 峰显著性指标（基于 `-dQ/dV` 峰检测得到）。 |
-| `peak1_width_v` | 主峰半高宽 | Peak-1 Width | 伏特（V） | 峰的半高宽换算到电压轴后的宽度。 |
-| `peak2_voltage_v` ~ `peak3_width_v` | 次峰参数 | Peak-2/3 Parameters | 同上 | 第二、第三显著峰参数；若不足 3 个峰，对应列为空。 |
+### D1. 周期级峰特征表（`discharge_dqdv_peak_features_*`）
 
-提取规则摘要：
+| 列名 | 中文名称 | 单位 | 说明 |
+|---|---|---|---|
+| `policy` | 策略名称 | 无 | 测试工况标识。 |
+| `cell_code` | 电芯编号 | 无 | 电芯唯一标识。 |
+| `cycles` | 循环序号 | 次 | 循环编号。 |
+| `state` | 状态 | 无 | 固定为 `dischg`。 |
+| `source_file` | 源文件路径 | 无 | 对应 `cycles_*.csv` 文件绝对路径。 |
+| `curve_method` | 曲线方法 | 无 | 固定为 `polyfit`。 |
+| `fit_degree` | 拟合阶数 | 无 | `Q=f(V)` 多项式最优阶数（默认候选 `3~7`）。 |
+| `fit_r2` | 拟合 R2 | 无 | 最优多项式在离散点上的 R2。 |
+| `fit_mae` | 拟合 MAE | Ah | 最优多项式在离散点上的 MAE。 |
+| `n_points_raw_group` | 原始组点数 | 点 | 原始放电段组内点数。 |
+| `n_points_qv` | Q-V 有效点数 | 点 | 去重电压并单调约束后的 Q-V 点数。 |
+| `n_points_dqdv` | dQ/dV 点数 | 点 | 统一网格重采样后可用 dQ/dV 点数。 |
+| `temp_max_c` | 最高温度（全放电周期） | °C | 当前放电周期内温度最大值（基于 `Temper`，非峰区间）。 |
+| `temp_min_c` | 最低温度（全放电周期） | °C | 当前放电周期内温度最小值（基于 `Temper`，非峰区间）。 |
+| `temp_avg_c` | 平均温度（全放电周期） | °C | 当前放电周期内温度均值（基于 `Temper`，非峰区间）。 |
+| `voltage_span_v` | 电压跨度 | V | 当前周期放电段电压范围。 |
+| `capacity_span_ah` | 容量跨度 | Ah | 当前周期放电段容量范围。 |
+| `peak_count_detected` | 检测峰数量 | 个 | 平滑曲线检测到的峰总数。 |
+| `main_peak_voltage_v` | 主峰峰位 | V | 峰高排名第 1 峰位。 |
+| `main_peak_width_v` | 主峰峰宽 | V | 主峰半高宽。 |
+| `main_peak_height_dqdv` | 主峰峰高 | Ah/V | 主峰 dQ/dV 值。 |
+| `main_peak_area` | 主峰面积 | Ah | 主峰局部积分面积。 |
+| `main_peak_prominence` | 主峰显著性 | Ah/V | 主峰 prominence。 |
+| `main_peak_skewness` | 主峰过程偏度 | 无 | 主峰局部曲线段（基于峰左右基线区间）的偏度。 |
+| `main_peak_temp_max_c` | 主峰区间最高温度 | °C | 主峰面积积分区间（峰左右基线区间）内对应原始放电点温度最大值。 |
+| `main_peak_temp_min_c` | 主峰区间最低温度 | °C | 主峰面积积分区间（峰左右基线区间）内对应原始放电点温度最小值。 |
+| `main_peak_temp_avg_c` | 主峰区间平均温度 | °C | 主峰面积积分区间（峰左右基线区间）内对应原始放电点温度均值。 |
+| `second_peak_voltage_v` | 次峰峰位 | V | 峰高排名第 2 峰位（不足两峰时为空）。 |
+| `second_peak_width_v` | 次峰峰宽 | V | 次峰半高宽。 |
+| `second_peak_height_dqdv` | 次峰峰高 | Ah/V | 次峰 dQ/dV 值。 |
+| `second_peak_area` | 次峰面积 | Ah | 次峰局部积分面积。 |
+| `second_peak_prominence` | 次峰显著性 | Ah/V | 次峰 prominence。 |
+| `second_peak_skewness` | 次峰过程偏度 | 无 | 次峰局部曲线段（基于峰左右基线区间）的偏度。 |
+| `second_peak_temp_max_c` | 次峰区间最高温度 | °C | 次峰面积积分区间（峰左右基线区间）内对应原始放电点温度最大值。 |
+| `second_peak_temp_min_c` | 次峰区间最低温度 | °C | 次峰面积积分区间（峰左右基线区间）内对应原始放电点温度最小值。 |
+| `second_peak_temp_avg_c` | 次峰区间平均温度 | °C | 次峰面积积分区间（峰左右基线区间）内对应原始放电点温度均值。 |
+| `main_second_peak_voltage_gap_v` | 主次峰峰位差 | V | 主峰与次峰峰位绝对差。 |
+| `is_valid_curve` | 曲线是否有效 | 0/1 | 有效曲线为 `True`，否则 `False`。 |
+| `invalid_reason` | 无效原因 | 文本 | 无效原因标识（有效曲线为空）。 |
 
-1. 输入范围：递归读取 `data/raw/**/cycles_*.csv`，仅使用放电段（`flag_dischg=1`）并按 `ts` 排序。
-2. dQ/dV 构建：使用 `ah_dischg` 与电压 `V` 做离散差分，保留原始 dQ/dV 符号。
-3. 边界与有效性：默认严格阈值，要求窗口点数不少于 `50`，有效 dQ/dV 点不少于 `10`。
-4. 峰识别：采用 SciPy（Savitzky-Golay 平滑 + `find_peaks`），并仅输出每循环 Top-3 峰统计。
-5. 过滤原则：未识别到有效峰的 `policy + cell_code + cycles` 组合不写入输出文件。
+### D2. 点级曲线表（`discharge_dqdv_curve_points_sample10.csv`）
+
+| 列名 | 中文名称 | 单位 | 说明 |
+|---|---|---|---|
+| `policy` / `cell_code` / `cycles` / `state` | 周期身份字段 | - | 与周期级表一致。 |
+| `point_index` | 点序号 | 无 | 重采样曲线点索引。 |
+| `voltage` | 原始电压轴 | V | 用于可视化的放电电压坐标。 |
+| `oriented_voltage` | 定向电压轴 | V | 放电轴方向变换后的电压坐标。 |
+| `capacity_fit` | 拟合容量 | Ah | 重采样点对应拟合容量。 |
+| `raw_dqdv` | 原始 dQ/dV | Ah/V | 由重采样容量差分得到，`deltaQ<0` 截断为 0。 |
+| `smoothed_dqdv` | 平滑 dQ/dV | Ah/V | `post_smooth_window=7` 滑动均值平滑。 |
+| `curve_method` / `fit_degree` / `fit_r2` / `fit_mae` | 拟合诊断 | - | 与周期级表对应。 |
+
+### D3. 提取规则摘要（skills 对齐）
+
+1. 数据过滤：仅处理 `flag_dischg=1` 的放电段，按 `ts` 排序。
+2. 曲线构建：先构造单调 `Q(V)`（电压去重、容量单调约束）。
+3. 拟合策略：`polyfit`，候选阶数 `3~7`，按 `R2` -> `MAE` -> 低阶优先选优。
+4. 重采样策略：统一电压步长 `0.002V`，从拟合曲线差分计算 dQ/dV。
+5. 平滑策略：`post_smooth_window=7`（中心滑动均值）。
+6. 峰值策略：在平滑曲线上检测峰并按峰高排序，仅输出主峰和次峰固定字段；峰区间温度统计使用与峰面积积分一致的峰左右基线电压区间映射原始放电温度点计算。
+7. QC 策略：无效周期不删除，保留 `is_valid_curve` 与 `invalid_reason`。
+8. 保存精度：峰统计特征列统一保留小数点后 `3` 位；温度相关列统一保留小数点后 `2` 位。
