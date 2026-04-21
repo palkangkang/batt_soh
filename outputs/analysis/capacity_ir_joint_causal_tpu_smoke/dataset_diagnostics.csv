@@ -1,0 +1,8 @@
+metric,value,notes
+life_rows,138867.0,life_performance 过滤后行数
+window_rows,98893.0,窗口样本行数
+analysis_rows,98893.0,合并后分析样本行数
+ir_non_positive_filtered_share,0.2878581664470321,窗口构造后样本保留差异（含ir>0等条件影响）
+unique_clusters,173.0,policy+cell cluster 数
+bootstrap_iters,5.0,bootstrap 迭代次数
+dml_nuisance_model,,DML nuisance 模型: linear

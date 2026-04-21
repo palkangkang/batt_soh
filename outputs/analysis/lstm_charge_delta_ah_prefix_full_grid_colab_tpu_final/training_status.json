@@ -1,0 +1,38 @@
+{
+  "current_epoch": 30,
+  "total_epochs": 30,
+  "best_epoch": 20,
+  "best_valid_loss": 0.0010510247827479598,
+  "no_improve_count": 10,
+  "finished": true,
+  "last_update": "2026-04-14 09:11:45",
+  "args_signature": "f2424d30277fb7a01b97caece26cdf4a4ec40d5591b0fe73d2d2919da449dbf6",
+  "signature_payload": {
+    "sequence_mode": "prefix_full",
+    "device": "cuda",
+    "max_train_windows": 0,
+    "max_valid_windows": 0,
+    "hidden_size": 128,
+    "num_layers": 2,
+    "dropout": 0.1,
+    "learning_rate": 0.001,
+    "batch_size": 256,
+    "seed": 20260407
+  },
+  "valid_metrics": {
+    "set_type": "valid",
+    "n_windows": 41539,
+    "mse": 0.001051024766638875,
+    "rmse": 0.03241951212832906,
+    "mae": 0.025174187496304512,
+    "r2": 0.6133295297622681
+  },
+  "train_metrics": {
+    "set_type": "train",
+    "n_windows": 98179,
+    "mse": 0.000975284434389323,
+    "rmse": 0.031229544255229263,
+    "mae": 0.02407863363623619,
+    "r2": 0.6636756658554077
+  }
+}

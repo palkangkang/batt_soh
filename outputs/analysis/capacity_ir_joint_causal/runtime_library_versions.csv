@@ -1,0 +1,10 @@
+package,version
+python,3.12.10
+platform,Windows-11-10.0.22631-SP0
+numpy,2.0.2
+pandas,2.2.2
+scipy,1.16.3
+sklearn,1.6.1
+matplotlib,3.10.0
+torch,2.10.0+cpu
+torch_xla,not_installed

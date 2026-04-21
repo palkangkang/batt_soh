@@ -1,0 +1,61 @@
+{
+  "current_epoch": 2,
+  "total_epochs": 2,
+  "best_epoch": 2,
+  "best_valid_loss": 0.0251855687238276,
+  "no_improve_count": 0,
+  "finished": true,
+  "last_update": "2026-04-16 14:51:33",
+  "args_signature": "a00ca3dec79737fd7f9cadda497318b0ddd6ae2edb016a88880d5c95f6c9d64d",
+  "signature_payload": {
+    "feature_pack": "main_peak_temp_cycle",
+    "sequence_mode": "prefix_full",
+    "device": "cpu",
+    "hidden_size": 128,
+    "num_layers": 2,
+    "dropout": 0.2,
+    "learning_rate": 0.001,
+    "batch_size": 64,
+    "max_train_windows": 512,
+    "max_valid_windows": 256,
+    "q_min": 0.3,
+    "q_max": 1.3,
+    "q_ref_cycles": 5,
+    "retention_min": 0.3,
+    "retention_max": 1.1,
+    "checkpoint_snapshot_interval": 1,
+    "seed": 20260416
+  },
+  "valid_metrics_retention": {
+    "set_type": "valid",
+    "n_windows": 256,
+    "mse": 0.025185568258166313,
+    "rmse": 0.15869961643988403,
+    "mae": 0.1522456407546997,
+    "r2": -10.931014060974121
+  },
+  "valid_metrics_q_discharge": {
+    "set_type": "valid",
+    "n_windows": 256,
+    "mse": 0.029202202335000038,
+    "rmse": 0.17088651888022074,
+    "mae": 0.1638912856578827,
+    "r2": -9.465166091918945
+  },
+  "train_metrics_retention": {
+    "set_type": "train",
+    "n_windows": 512,
+    "mse": 0.026043783873319626,
+    "rmse": 0.16138086588353537,
+    "mae": 0.15301254391670227,
+    "r2": -10.717591285705566
+  },
+  "train_metrics_q_discharge": {
+    "set_type": "train",
+    "n_windows": 512,
+    "mse": 0.02992633357644081,
+    "rmse": 0.17299229340187616,
+    "mae": 0.16398197412490845,
+    "r2": -9.923837661743164
+  }
+}

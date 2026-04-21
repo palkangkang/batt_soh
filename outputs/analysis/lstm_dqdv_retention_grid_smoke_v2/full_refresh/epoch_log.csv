@@ -1,0 +1,1 @@
+timestamp,epoch,train_loss,valid_loss,is_best_epoch,best_valid_loss,no_improve_count

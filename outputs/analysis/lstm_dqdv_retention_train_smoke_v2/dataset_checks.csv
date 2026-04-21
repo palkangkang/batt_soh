@@ -1,0 +1,5 @@
+check_item,pass_flag
+check_feature_dim_10,1
+check_split_overlap_zero,1
+check_feature_nan_free,1
+check_retention_positive,1

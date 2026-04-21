@@ -27,7 +27,7 @@ def find_summary_files() -> list[Path]:
 
 
 def extract_rows(files: list[Path]) -> tuple[list[dict], int]:
-    required = {"policy", "cell_code", "cycle", "QDischarge", "Tmax"}
+    required = {"policy", "cell_code", "cycle", "QDischarge", "Tmax", "IR"}
     dedup: Dict[Tuple[str, str, int], dict] = {}
     conflict_count = 0
 
@@ -45,6 +45,7 @@ def extract_rows(files: list[Path]) -> tuple[list[dict], int]:
                     cycles = int(float(row["cycle"]))
                     q_discharge = float(row["QDischarge"])
                     t_max = float(row["Tmax"])
+                    ir = float(row["IR"])
                 except (TypeError, ValueError, KeyError):
                     continue
 
@@ -55,6 +56,7 @@ def extract_rows(files: list[Path]) -> tuple[list[dict], int]:
                     "cycles": cycles,
                     "q_discharge": q_discharge,
                     "t_max": t_max,
+                    "ir": ir,
                 }
 
                 if key not in dedup:
@@ -64,7 +66,8 @@ def extract_rows(files: list[Path]) -> tuple[list[dict], int]:
                 old = dedup[key]
                 same_q = abs(old["q_discharge"] - q_discharge) <= FLOAT_EPS
                 same_t = abs(old["t_max"] - t_max) <= FLOAT_EPS
-                if not (same_q and same_t):
+                same_ir = abs(old["ir"] - ir) <= FLOAT_EPS
+                if not (same_q and same_t and same_ir):
                     conflict_count += 1
                     dedup[key] = new_row
 
@@ -75,7 +78,7 @@ def extract_rows(files: list[Path]) -> tuple[list[dict], int]:
 
 def save_csv(rows: list[dict], out_path: Path) -> None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    fieldnames = ["policy", "cell_code", "cycles", "q_discharge", "t_max"]
+    fieldnames = ["policy", "cell_code", "cycles", "q_discharge", "t_max", "ir"]
     with out_path.open("w", encoding="utf-8", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()

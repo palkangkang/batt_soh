@@ -1,0 +1,8 @@
+check_item,pass_flag
+check_range_feature_dim_12,1
+check_mask_feature_dim_12,1
+check_split_overlap_zero,1
+check_mask_values_binary,1
+check_zero_fill_with_mask,1
+check_window_size_train,1
+check_window_size_valid,1

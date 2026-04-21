@@ -1,0 +1,2 @@
+trial_id,sequence_mode,window_size,hidden_size,learning_rate,num_layers,dropout,best_epoch,best_valid_loss,valid_mse,valid_rmse,valid_mae,valid_r2,train_samples,valid_samples,checkpoint_path
+1,prefix_full,,64,0.001,1,0.1,17,0.005883124656975269,0.005883124656975269,0.07670152969123412,0.06355338543653488,-4.553676605224609,32,16,outputs\analysis\lstm_grid_trial_resume_epoch_test2\checkpoints\trial_001.pt

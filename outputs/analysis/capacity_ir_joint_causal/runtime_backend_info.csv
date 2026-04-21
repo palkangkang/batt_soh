@@ -1,0 +1,2 @@
+requested_backend,backend_used,requested_device,device_used,torch_available,torch_xla_available,fallback_reason
+numpy,numpy,cpu,cpu,False,False,

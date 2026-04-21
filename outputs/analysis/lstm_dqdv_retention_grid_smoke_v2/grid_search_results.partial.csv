@@ -1,0 +1,2 @@
+trial_id,hidden_size,learning_rate,num_layers,dropout,best_epoch,best_valid_loss,valid_retention_mse,valid_retention_rmse,valid_retention_mae,valid_retention_r2,valid_q_mse,valid_q_rmse,valid_q_mae,valid_q_r2,train_samples,valid_samples,checkpoint_path
+1,64,0.001,1,0.1,2,0.004793055355548859,0.004793055355548859,0.06923189550740944,0.04810676723718643,-1.0480430126190186,0.005581824108958244,0.07471160625336765,0.05177628621459007,-0.7872989177703857,512,256,C:\Users\pal\projects\batt_soh\outputs\analysis\lstm_dqdv_retention_grid_smoke_v2\checkpoints\trial_001\best.pt

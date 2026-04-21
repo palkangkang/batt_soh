@@ -1,0 +1,2 @@
+requested_backend,backend_used,requested_device,device_used,torch_available,torch_xla_available,fallback_reason
+torch,torch,tpu,cpu,True,False,torch_xla_not_available

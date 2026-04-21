@@ -1,0 +1,15 @@
+{
+  "trial_id": 1,
+  "hidden_size": 64,
+  "learning_rate": 0.001,
+  "num_layers": 1,
+  "dropout": 0.1,
+  "best_epoch": 2,
+  "best_valid_loss": 0.0047930553555488,
+  "valid_retention_rmse": 0.0692318955074094,
+  "valid_retention_r2": -1.0480430126190186,
+  "valid_q_rmse": 0.0747116062533676,
+  "valid_q_r2": -0.7872989177703857,
+  "checkpoint_path": "C:\\Users\\pal\\projects\\batt_soh\\outputs\\analysis\\lstm_dqdv_retention_grid_smoke_v2\\checkpoints\\trial_001\\best.pt",
+  "timestamp": "2026-04-16 13:43:21"
+}

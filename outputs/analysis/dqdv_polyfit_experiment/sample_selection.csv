@@ -1,0 +1,6 @@
+sample_order,sample_id,policy,cell_code,cycles,file_path,is_fixed_sample
+1,4_8C-80PER_4_8C|465027|10,4_8C-80PER_4_8C,465027,10,C:\Users\pal\projects\batt_soh\data\raw\4_8C-80PER_4_8C\cycles_465027.csv,1
+2,5C_67PER_4C_NEWSTRUCTURE|737329|626,5C_67PER_4C_NEWSTRUCTURE,737329,626,C:\Users\pal\projects\batt_soh\data\raw\5C_67PER_4C_NEWSTRUCTURE\cycles_737329.csv,0
+3,6C-50PER_3C|460507|685,6C-50PER_3C,460507,685,C:\Users\pal\projects\batt_soh\data\raw\6C-50PER_3C\cycles_460507.csv,0
+4,4_8C_80PER_4_8C_NEWSTRUCTURE|737345|638,4_8C_80PER_4_8C_NEWSTRUCTURE,737345,638,C:\Users\pal\projects\batt_soh\data\raw\4_8C_80PER_4_8C_NEWSTRUCTURE\cycles_737345.csv,0
+5,5_6C_19PER_4_6C_NEWSTRUCTURE|737287|238,5_6C_19PER_4_6C_NEWSTRUCTURE,737287,238,C:\Users\pal\projects\batt_soh\data\raw\5_6C_19PER_4_6C_NEWSTRUCTURE\cycles_737287.csv,0

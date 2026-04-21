@@ -1,0 +1,2 @@
+trial_id,sequence_mode,window_size,hidden_size,learning_rate,num_layers,dropout,best_epoch,best_valid_loss,valid_mse,valid_rmse,valid_mae,valid_r2,train_samples,valid_samples,checkpoint_path
+1,prefix_full,,64,0.001,1,0.1,3,0.020926468539983034,0.020926468074321747,0.1446598357330802,0.11536522209644318,-6.571550369262695,2048,1024,outputs\analysis\lstm_charge_delta_ah_prefix_full_grid_cpu_speedcheck\checkpoints\trial_001.pt

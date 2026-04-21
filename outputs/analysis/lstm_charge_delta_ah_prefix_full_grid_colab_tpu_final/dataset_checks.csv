@@ -1,0 +1,10 @@
+check_item,pass_flag
+check_range_feature_dim_12,1
+check_mask_feature_dim_12,1
+check_split_overlap_zero,1
+check_mask_values_binary,1
+check_zero_fill_with_mask,1
+check_prefix_min_len_train_ge_1,1
+check_prefix_min_len_valid_ge_1,1
+check_prefix_var_len_train,1
+check_prefix_var_len_valid,1
