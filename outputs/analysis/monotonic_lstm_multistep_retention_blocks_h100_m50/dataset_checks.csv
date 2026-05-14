@@ -1,0 +1,11 @@
+﻿check_item,value,expected,pass_flag,details
+sample_mode,non_overlapping_blocks,non_overlapping_blocks,1,
+history_len,100,100,1,expected 100 outside smoke
+horizon,50,50,1,expected 50 outside smoke
+block_stride,150,150,1,expected history_len+horizon
+feature_count,55,55,1,recommended55
+target_pack,compact4,compact4,1,"main_peak_area,main_peak_height_dqdv,main_peak_voltage_v,main_peak_skewness"
+target_dim,4,4,1,"main_peak_area,main_peak_height_dqdv,main_peak_voltage_v,main_peak_skewness"
+forbidden_input_columns_present,0,0,1,
+train_block_count,580,>0,1,
+valid_block_count,251,>0,1,

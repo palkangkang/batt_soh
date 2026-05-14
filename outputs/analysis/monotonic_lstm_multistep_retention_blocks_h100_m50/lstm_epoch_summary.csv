@@ -1,0 +1,4 @@
+﻿method,best_epoch,best_valid_loss,best_valid_H50_RMSE
+monotonic_lstm_penalty,70,0.1588582992553711,0.019522459651838336
+monotonic_lstm_delta_strict,15,0.015173357911407948,0.009092580148982055
+monotonic_lstm_delta_with_history_retention,18,0.01227167621254921,0.007888384313293995
