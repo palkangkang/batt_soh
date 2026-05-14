@@ -35,6 +35,41 @@ MAIN_PEAK_FEATURE_COLUMNS: List[str] = [
     "main_peak_temp_avg_c",
 ]
 MODEL_FEATURE_COLUMNS: List[str] = [*MAIN_PEAK_FEATURE_COLUMNS, "cycle_index_norm"]
+COMPACT_PEAK_SHAPE_FEATURE_COLUMNS: List[str] = [
+    "main_peak_area",
+    "main_peak_skewness",
+    "main_peak_voltage_v",
+    "main_peak_width_v",
+]
+COMPACT_PEAK_SHAPE_HEIGHT_FEATURE_COLUMNS: List[str] = [
+    *COMPACT_PEAK_SHAPE_FEATURE_COLUMNS,
+    "main_peak_height_dqdv",
+]
+FEATURE_PACK_COLUMNS: Dict[str, List[str]] = {
+    "main_peak_temp_cycle": list(MODEL_FEATURE_COLUMNS),
+    "compact_peak_shape": list(COMPACT_PEAK_SHAPE_FEATURE_COLUMNS),
+    "compact_peak_shape_height": list(COMPACT_PEAK_SHAPE_HEIGHT_FEATURE_COLUMNS),
+}
+FEATURE_PACK_DESCRIPTIONS: Dict[str, str] = {
+    "main_peak_temp_cycle": "主峰9维 + cycle_index_norm",
+    "compact_peak_shape": "四个dQdV主峰形状特征，不含cycle_index_norm",
+    "compact_peak_shape_height": "四个dQdV主峰形状特征 + 主峰高度，不含cycle_index_norm",
+}
+
+
+def get_model_feature_columns(feature_pack: str) -> List[str]:
+    """Return model feature columns for a named dQdV feature pack."""
+
+    if feature_pack not in FEATURE_PACK_COLUMNS:
+        valid = ", ".join(sorted(FEATURE_PACK_COLUMNS))
+        raise ValueError(f"Unknown feature_pack={feature_pack!r}. Valid values: {valid}")
+    return list(FEATURE_PACK_COLUMNS[feature_pack])
+
+
+def describe_feature_pack(feature_pack: str) -> str:
+    """Return a human-readable description for a named feature pack."""
+
+    return FEATURE_PACK_DESCRIPTIONS.get(str(feature_pack), str(feature_pack))
 
 
 def parse_args() -> argparse.Namespace:
@@ -74,9 +109,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--feature-pack",
         type=str,
-        choices=["main_peak_temp_cycle"],
+        choices=sorted(FEATURE_PACK_COLUMNS),
         default="main_peak_temp_cycle",
-        help="Fixed feature pack: main peak + main-peak temperature + normalized cycle index.",
+        help=(
+            "Feature pack. Use compact_peak_shape for the four-feature dQdV set: "
+            "main_peak_area, main_peak_skewness, main_peak_voltage_v, main_peak_width_v; "
+            "use compact_peak_shape_height to add main_peak_height_dqdv without cycle index."
+        ),
     )
     parser.add_argument(
         "--sequence-mode",
@@ -291,8 +330,11 @@ def build_label_lookup(merged: pd.DataFrame) -> Dict[Tuple[str, str, int], Dict[
 def build_resume_signature_payload(args: argparse.Namespace, device: torch.device) -> Dict[str, Any]:
     """Build deterministic payload to validate resume compatibility."""
 
+    feature_cols = get_model_feature_columns(str(args.feature_pack))
     return {
         "feature_pack": str(args.feature_pack),
+        "feature_columns": list(feature_cols),
+        "input_size": int(len(feature_cols)),
         "sequence_mode": str(args.sequence_mode),
         "device": str(device),
         "hidden_size": int(args.hidden_size),
@@ -368,7 +410,7 @@ def build_dataset_checks(
     overlap = len(train_keys.intersection(valid_keys))
     feature_mat = merged[list(feature_cols)].to_numpy(dtype=np.float32)
     checks = [
-        ("check_feature_dim_10", int(len(feature_cols) == 10)),
+        ("check_feature_dim_expected", int(feature_mat.shape[1] == len(feature_cols))),
         ("check_split_overlap_zero", int(overlap == 0)),
         ("check_feature_nan_free", int(np.isfinite(feature_mat).all())),
         ("check_retention_positive", int((merged["retention"] > 0).all())),
@@ -396,6 +438,7 @@ def build_q_arrays_from_metas(
 def build_report(
     args: argparse.Namespace,
     device: torch.device,
+    feature_cols: Sequence[str],
     merged_rows: int,
     train_rows: int,
     valid_rows: int,
@@ -413,6 +456,7 @@ def build_report(
     lines.append(f"- 设备：`{device.type}`")
     lines.append(f"- 序列模式：`{args.sequence_mode}`")
     lines.append(f"- 特征包：`{args.feature_pack}`")
+    lines.append(f"- 特征包说明：{describe_feature_pack(str(args.feature_pack))}")
     lines.append(f"- q 绝对过滤：`{args.q_min} <= q_discharge <= {args.q_max}`")
     lines.append(
         "- retention 过滤："
@@ -425,7 +469,10 @@ def build_report(
     lines.append(f"- 合并后 cycle 级样本数：**{merged_rows:,}**")
     lines.append(f"- 训练样本数：**{train_rows:,}**")
     lines.append(f"- 验证样本数：**{valid_rows:,}**")
-    lines.append("- 每个时间步输入维度：`10`（主峰9维 + cycle_index_norm）")
+    lines.append(f"- 每个时间步输入维度：`{len(feature_cols)}`")
+    lines.append("- 输入特征：")
+    for col in feature_cols:
+        lines.append(f"  - `{col}`")
     lines.append("")
     lines.append("## 3. 指标结果")
     lines.append("| target | set_type | n_samples | MSE | RMSE | MAE | R2 |")
@@ -461,6 +508,7 @@ def run_training(args: argparse.Namespace) -> Dict[str, Any]:
 
     if str(args.sequence_mode) != "prefix_full":
         raise RuntimeError("This script only supports --sequence-mode prefix_full.")
+    feature_cols = get_model_feature_columns(str(args.feature_pack))
 
     split_df = base_lstm.load_split_map(args.train_split_path, args.valid_split_path)
     feature_df = load_dqdv_main_feature_table(args.dqdv_path)
@@ -474,11 +522,11 @@ def run_training(args: argparse.Namespace) -> Dict[str, Any]:
     )
     merged = merge_feature_label_split(feature_df=feature_df, label_df=label_df, split_df=split_df)
     merged = add_cycle_index_norm(merged)
-    merged = coerce_feature_columns(merged, MODEL_FEATURE_COLUMNS)
+    merged = coerce_feature_columns(merged, feature_cols)
     if merged.empty:
         raise RuntimeError("Merged dataset is empty after dQdV/retention/split join.")
 
-    seq_map = build_sequences(merged=merged, feature_cols=MODEL_FEATURE_COLUMNS)
+    seq_map = build_sequences(merged=merged, feature_cols=feature_cols)
     train_seq_map, valid_seq_map = base_lstm.split_sequence_dict(seq_map)
     train_dataset = base_lstm.PrefixHistoryDataset(
         sequences=train_seq_map,
@@ -511,7 +559,7 @@ def run_training(args: argparse.Namespace) -> Dict[str, Any]:
     )
 
     model = base_lstm.LSTMRegressor(
-        input_size=len(MODEL_FEATURE_COLUMNS),
+        input_size=len(feature_cols),
         hidden_size=int(args.hidden_size),
         num_layers=int(args.num_layers),
         dropout=float(args.dropout),
@@ -621,12 +669,13 @@ def run_training(args: argparse.Namespace) -> Dict[str, Any]:
                     "epoch": int(epoch),
                     "model_state_dict": model.state_dict(),
                     "model_config": {
-                        "input_size": len(MODEL_FEATURE_COLUMNS),
+                        "input_size": len(feature_cols),
                         "hidden_size": int(args.hidden_size),
                         "num_layers": int(args.num_layers),
                         "dropout": float(args.dropout),
                         "sequence_mode": "prefix_full",
                         "feature_pack": str(args.feature_pack),
+                        "feature_columns": list(feature_cols),
                     },
                     "best_valid_loss": float(best_valid_loss),
                     "best_epoch": int(best_epoch),
@@ -764,7 +813,7 @@ def run_training(args: argparse.Namespace) -> Dict[str, Any]:
     )
 
     loss_df = pd.DataFrame(loss_rows)
-    checks_df = build_dataset_checks(merged=merged, feature_cols=MODEL_FEATURE_COLUMNS)
+    checks_df = build_dataset_checks(merged=merged, feature_cols=feature_cols)
     run_config = {
         "script": str(SCRIPT_PATH),
         "python_executable": os.path.realpath(os.sys.executable),
@@ -773,7 +822,9 @@ def run_training(args: argparse.Namespace) -> Dict[str, Any]:
         "resume_start_epoch": int(start_epoch),
         "args_signature": args_signature,
         "signature_payload": signature_payload,
-        "feature_columns": list(MODEL_FEATURE_COLUMNS),
+        "feature_pack_description": describe_feature_pack(str(args.feature_pack)),
+        "feature_columns": list(feature_cols),
+        "input_size": int(len(feature_cols)),
         "best_epoch": int(best_epoch),
         "best_valid_loss": float(best_valid_loss),
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -781,6 +832,7 @@ def run_training(args: argparse.Namespace) -> Dict[str, Any]:
     report_text = build_report(
         args=args,
         device=device,
+        feature_cols=feature_cols,
         merged_rows=int(len(merged)),
         train_rows=int(len(train_dataset)),
         valid_rows=int(len(valid_dataset)),

@@ -68,6 +68,17 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=REPO_ROOT / "outputs" / "analysis" / "lstm_dqdv_retention_grid_cpu",
     )
+    parser.add_argument(
+        "--feature-pack",
+        type=str,
+        choices=sorted(train_mod.FEATURE_PACK_COLUMNS),
+        default="main_peak_temp_cycle",
+        help=(
+            "Feature pack passed to the dQdV retention trainer. Use compact_peak_shape for "
+            "main_peak_area, main_peak_skewness, main_peak_voltage_v, main_peak_width_v; "
+            "use compact_peak_shape_height to add main_peak_height_dqdv without cycle index."
+        ),
+    )
     parser.add_argument("--hidden-sizes", type=str, default="64,128,192")
     parser.add_argument("--learning-rates", type=str, default="1e-3,5e-4")
     parser.add_argument("--num-layers-list", type=str, default="1,2")
@@ -244,8 +255,9 @@ def load_sequence_maps(
     )
     merged = train_mod.merge_feature_label_split(feature_df=feature_df, label_df=label_df, split_df=split_df)
     merged = train_mod.add_cycle_index_norm(merged)
-    merged = train_mod.coerce_feature_columns(merged, train_mod.MODEL_FEATURE_COLUMNS)
-    seq_map = train_mod.build_sequences(merged=merged, feature_cols=train_mod.MODEL_FEATURE_COLUMNS)
+    feature_cols = train_mod.get_model_feature_columns(str(args.feature_pack))
+    merged = train_mod.coerce_feature_columns(merged, feature_cols)
+    seq_map = train_mod.build_sequences(merged=merged, feature_cols=feature_cols)
     train_seq_map, valid_seq_map = base_lstm.split_sequence_dict(seq_map)
     label_lookup = train_mod.build_label_lookup(merged)
     return train_seq_map, valid_seq_map, label_lookup
@@ -299,11 +311,12 @@ def build_loaders(
     return train_loader, valid_loader
 
 
-def make_model(cfg: TrialConfig, device: torch.device) -> nn.Module:
+def make_model(cfg: TrialConfig, args: argparse.Namespace, device: torch.device) -> nn.Module:
     """Build one LSTM model instance for current trial."""
 
+    feature_cols = train_mod.get_model_feature_columns(str(args.feature_pack))
     return base_lstm.LSTMRegressor(
-        input_size=len(train_mod.MODEL_FEATURE_COLUMNS),
+        input_size=len(feature_cols),
         hidden_size=int(cfg.hidden_size),
         num_layers=int(cfg.num_layers),
         dropout=float(cfg.dropout),
@@ -331,15 +344,18 @@ def append_trial_epoch_log(path: Path, row: Mapping[str, Any]) -> None:
 def build_trial_signature_payload(cfg: TrialConfig, args: argparse.Namespace, device: torch.device) -> Dict[str, Any]:
     """Build deterministic resume payload for one trial."""
 
+    feature_cols = train_mod.get_model_feature_columns(str(args.feature_pack))
     return {
         "trial_id": int(cfg.trial_id),
+        "feature_pack": str(args.feature_pack),
+        "feature_columns": list(feature_cols),
+        "input_size": int(len(feature_cols)),
         "device": str(device),
         "hidden_size": int(cfg.hidden_size),
         "learning_rate": float(cfg.learning_rate),
         "num_layers": int(cfg.num_layers),
         "dropout": float(cfg.dropout),
         "batch_size": int(args.batch_size),
-        "epochs": int(args.epochs),
         "max_train_windows": int(args.max_train_windows),
         "max_valid_windows": int(args.max_valid_windows),
         "q_min": float(args.q_min),
@@ -357,6 +373,20 @@ def build_trial_signature(payload: Mapping[str, Any]) -> str:
 
     canonical = json.dumps(dict(payload), sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def infer_checkpoint_input_size(checkpoint: Mapping[str, Any]) -> Optional[int]:
+    """Infer saved model input size from checkpoint metadata or LSTM weight shape."""
+
+    model_config = checkpoint.get("model_config")
+    if isinstance(model_config, Mapping) and "input_size" in model_config:
+        return int(model_config["input_size"])
+    state_dict = checkpoint.get("model_state_dict")
+    if isinstance(state_dict, Mapping):
+        weight = state_dict.get("lstm.weight_ih_l0")
+        if hasattr(weight, "shape") and len(weight.shape) == 2:
+            return int(weight.shape[1])
+    return None
 
 
 def build_trial_paths(ckpt_root: Path, trial_id: int) -> Tuple[Path, Path, Path, Path]:
@@ -397,11 +427,16 @@ def build_result_row(
     valid_metrics_q: base_lstm.Metrics,
     train_samples: int,
     valid_samples: int,
+    args: argparse.Namespace,
 ) -> Dict[str, float | int | str]:
     """Build one result row for grid result CSV."""
 
+    feature_cols = train_mod.get_model_feature_columns(str(args.feature_pack))
     return {
         "trial_id": int(cfg.trial_id),
+        "feature_pack": str(args.feature_pack),
+        "input_size": int(len(feature_cols)),
+        "feature_columns": ",".join(feature_cols),
         "hidden_size": int(cfg.hidden_size),
         "learning_rate": float(cfg.learning_rate),
         "num_layers": int(cfg.num_layers),
@@ -452,8 +487,17 @@ def eval_existing_checkpoint(
         device=device,
     )
 
-    model = make_model(cfg=cfg, device=device)
     ckpt = torch.load(ckpt_path, map_location=device)
+    expected_input_size = len(train_mod.get_model_feature_columns(str(args.feature_pack)))
+    ckpt_input_size = infer_checkpoint_input_size(ckpt)
+    if ckpt_input_size is not None and ckpt_input_size != expected_input_size:
+        raise RuntimeError(
+            f"Trial {cfg.trial_id}: checkpoint input_size={ckpt_input_size} does not match "
+            f"feature_pack={args.feature_pack!r} input_size={expected_input_size}. "
+            "Use a separate output directory or disable --resume-existing."
+        )
+
+    model = make_model(cfg=cfg, args=args, device=device)
     model.load_state_dict(ckpt["model_state_dict"])
 
     y_true_ret, y_pred_ret, valid_idx = base_lstm.predict_loader(model=model, loader=valid_loader, device=device)
@@ -473,6 +517,7 @@ def eval_existing_checkpoint(
         valid_metrics_q=valid_metrics_q,
         train_samples=int(len(train_dataset)),
         valid_samples=int(len(valid_dataset)),
+        args=args,
     )
 
 
@@ -502,7 +547,7 @@ def train_one_trial(
         args=args,
         device=device,
     )
-    model = make_model(cfg=cfg, device=device)
+    model = make_model(cfg=cfg, args=args, device=device)
     criterion = nn.MSELoss()
     optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -571,6 +616,15 @@ def train_one_trial(
             base_lstm.atomic_torch_save(
                 {
                     "model_state_dict": model.state_dict(),
+                    "model_config": {
+                        "input_size": len(train_mod.get_model_feature_columns(str(args.feature_pack))),
+                        "hidden_size": int(cfg.hidden_size),
+                        "num_layers": int(cfg.num_layers),
+                        "dropout": float(cfg.dropout),
+                        "feature_pack": str(args.feature_pack),
+                        "feature_columns": train_mod.get_model_feature_columns(str(args.feature_pack)),
+                        "sequence_mode": "prefix_full",
+                    },
                     "hidden_size": int(cfg.hidden_size),
                     "learning_rate": float(cfg.learning_rate),
                     "num_layers": int(cfg.num_layers),
@@ -622,6 +676,8 @@ def train_one_trial(
                     "current_trial_id": int(cfg.trial_id),
                     "current_epoch": int(epoch),
                     "target_epochs": int(args.epochs),
+                    "feature_pack": str(args.feature_pack),
+                    "input_size": len(train_mod.get_model_feature_columns(str(args.feature_pack))),
                     "best_epoch": int(best_epoch),
                     "best_valid_loss": float(best_valid_loss),
                     "no_improve": int(no_improve),
@@ -731,6 +787,8 @@ def build_report(args: argparse.Namespace, results_df: pd.DataFrame, best_row: p
     lines.append(f"- 时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     lines.append(f"- Python：`{os.path.realpath(os.sys.executable)}`")
     lines.append(f"- 设备：`{args.device}`")
+    lines.append(f"- 特征包：`{args.feature_pack}`（{train_mod.describe_feature_pack(str(args.feature_pack))}）")
+    lines.append(f"- 输入维度：`{len(train_mod.get_model_feature_columns(str(args.feature_pack)))}`")
     lines.append(f"- 搜索空间：hidden={args.hidden_sizes}, lr={args.learning_rates}, layers={args.num_layers_list}, dropout={args.dropout_list}")
     lines.append(f"- 每 trial 训练：epochs={args.epochs}, patience={args.patience}")
     lines.append(f"- 子集窗口上限：train={args.max_train_windows}, valid={args.max_valid_windows}")
@@ -787,6 +845,10 @@ def finalize_stage1_outputs(
         json.dumps(
             {
                 "trial_id": int(best_row["trial_id"]),
+                "feature_pack": str(args.feature_pack),
+                "feature_pack_description": train_mod.describe_feature_pack(str(args.feature_pack)),
+                "feature_columns": train_mod.get_model_feature_columns(str(args.feature_pack)),
+                "input_size": int(len(train_mod.get_model_feature_columns(str(args.feature_pack)))),
                 "hidden_size": int(best_row["hidden_size"]),
                 "learning_rate": float(best_row["learning_rate"]),
                 "num_layers": int(best_row["num_layers"]),
@@ -832,7 +894,7 @@ def run_full_refresh_from_best(args: argparse.Namespace, best_config_path: Path)
         train_split_path=args.train_split_path,
         valid_split_path=args.valid_split_path,
         output_dir=full_output_dir,
-        feature_pack="main_peak_temp_cycle",
+        feature_pack=str(args.feature_pack),
         sequence_mode="prefix_full",
         batch_size=int(args.full_refresh_batch_size),
         epochs=int(args.full_refresh_epochs),
@@ -851,15 +913,15 @@ def run_full_refresh_from_best(args: argparse.Namespace, best_config_path: Path)
         device=str(args.device),
         num_workers=int(args.num_workers),
         seed=int(args.seed),
-        max_train_windows=0,
-        max_valid_windows=0,
+        max_train_windows=int(args.max_train_windows) if bool(args.smoke_test) else 0,
+        max_valid_windows=int(args.max_valid_windows) if bool(args.smoke_test) else 0,
         checkpoint_snapshot_interval=int(args.full_refresh_snapshot_interval),
         resume_interrupted=bool(args.full_refresh_resume_interrupted),
         best_state_file="best.pt",
         latest_state_file="latest.pt",
         epoch_log_file="epoch_log.csv",
         status_file="runtime_status.json",
-        smoke_test=False,
+        smoke_test=bool(args.smoke_test),
     )
 
     print("[Stage-2] Run full refresh training from best_grid_config.json", flush=True)

@@ -1,0 +1,142 @@
+{
+  "slideXmlCount": 20,
+  "notesXmlCount": 20,
+  "notesMissing": [],
+  "sampleNotes": [
+    {
+      "slide": 1,
+      "markers": {
+        "讲授目标": true,
+        "讲义正文": true,
+        "讲授提醒": true,
+        "来源": true
+      }
+    },
+    {
+      "slide": 4,
+      "markers": {
+        "讲授目标": true,
+        "讲义正文": true,
+        "讲授提醒": true,
+        "来源": true
+      }
+    },
+    {
+      "slide": 7,
+      "markers": {
+        "讲授目标": true,
+        "讲义正文": true,
+        "讲授提醒": true,
+        "来源": true
+      }
+    },
+    {
+      "slide": 13,
+      "markers": {
+        "讲授目标": true,
+        "讲义正文": true,
+        "讲授提醒": true,
+        "来源": true
+      }
+    },
+    {
+      "slide": 20,
+      "markers": {
+        "讲授目标": true,
+        "讲义正文": true,
+        "讲授提醒": true,
+        "来源": true
+      }
+    }
+  ],
+  "exportedPngCount": 20,
+  "minNonWhiteRatio": 0.0555,
+  "minDarkRatio": 0.0339,
+  "montage": "outputs/analysis/battery_life_research_bms_teaching_preview/montage_powerpoint.png",
+  "exportDir": "outputs/analysis/battery_life_research_bms_teaching_preview/powerpoint_export",
+  "noteBodyChineseCharCounts": [
+    {
+      "slide": 1,
+      "body_zh_chars": 184
+    },
+    {
+      "slide": 2,
+      "body_zh_chars": 196
+    },
+    {
+      "slide": 3,
+      "body_zh_chars": 195
+    },
+    {
+      "slide": 4,
+      "body_zh_chars": 196
+    },
+    {
+      "slide": 5,
+      "body_zh_chars": 199
+    },
+    {
+      "slide": 6,
+      "body_zh_chars": 167
+    },
+    {
+      "slide": 7,
+      "body_zh_chars": 165
+    },
+    {
+      "slide": 8,
+      "body_zh_chars": 151
+    },
+    {
+      "slide": 9,
+      "body_zh_chars": 192
+    },
+    {
+      "slide": 10,
+      "body_zh_chars": 156
+    },
+    {
+      "slide": 11,
+      "body_zh_chars": 182
+    },
+    {
+      "slide": 12,
+      "body_zh_chars": 152
+    },
+    {
+      "slide": 13,
+      "body_zh_chars": 181
+    },
+    {
+      "slide": 14,
+      "body_zh_chars": 180
+    },
+    {
+      "slide": 15,
+      "body_zh_chars": 178
+    },
+    {
+      "slide": 16,
+      "body_zh_chars": 171
+    },
+    {
+      "slide": 17,
+      "body_zh_chars": 194
+    },
+    {
+      "slide": 18,
+      "body_zh_chars": 185
+    },
+    {
+      "slide": 19,
+      "body_zh_chars": 172
+    },
+    {
+      "slide": 20,
+      "body_zh_chars": 189
+    }
+  ],
+  "minNoteBodyChineseChars": 151,
+  "maxNoteBodyChineseChars": 199,
+  "previewRegeneratedAfterNotesPatch": true
+}
