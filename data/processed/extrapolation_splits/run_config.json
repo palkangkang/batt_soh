@@ -1,0 +1,10 @@
+﻿{
+  "life_path": "C:\\Users\\pal\\projects\\batt_soh\\data\\processed\\life_performance.csv",
+  "policy_meaning_path": "C:\\Users\\pal\\projects\\batt_soh\\data\\processed\\policy_meaning.csv",
+  "balanced_train_path": "C:\\Users\\pal\\projects\\batt_soh\\data\\processed\\train_policy_cell_samples.csv",
+  "balanced_valid_path": "C:\\Users\\pal\\projects\\batt_soh\\data\\processed\\valid_policy_cell_samples.csv",
+  "long_life_threshold": 1000,
+  "policy_family_mode": "high_initial_rate",
+  "high_initial_rate_threshold": 5.0,
+  "output_dir": "C:\\Users\\pal\\projects\\batt_soh\\data\\processed\\extrapolation_splits"
+}

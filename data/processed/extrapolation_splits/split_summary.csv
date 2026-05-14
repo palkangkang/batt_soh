@@ -1,0 +1,7 @@
+﻿split,set_type,n_policy_cell,n_policy,max_cycles_min,max_cycles_q25,max_cycles_median,max_cycles_q75,max_cycles_max,max_cycles_mean,count_ge800,count_ge1000,split_overlap_count
+balanced,train,135,81,101.0,494.5,562.0,884.0,2189.0,731.2962962962963,51,27,0
+balanced,valid,52,47,240.0,531.25,809.5,986.0,2237.0,805.7307692307693,27,13,0
+long_life_holdout,train,147,82,101.0,487.0,536.0,809.0,988.0,613.5170068027211,38,0,0
+long_life_holdout,valid,40,16,1001.0,1052.25,1154.5,1270.25,2237.0,1260.9,40,40,0
+policy_family_holdout,train,70,36,101.0,484.0,523.5,860.25,2237.0,722.5285714285715,21,16,0
+policy_family_holdout,valid,117,49,280.0,513.0,787.0,931.0,1934.0,769.6239316239316,57,24,0
