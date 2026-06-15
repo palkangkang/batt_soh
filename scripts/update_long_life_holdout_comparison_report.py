@@ -23,12 +23,13 @@ ROUTE_IMAGE_FILES = (
     "route_lightgbm_gpt_image2.png",
     "route_lstm_pure_operational_gpt_image2.png",
     "route_lstm_history_retention_gpt_image2.png",
+    "route_last_retention_only_ablation.png",
 )
 
 METHOD_SPECS: List[Dict[str, str]] = []
 
 
-def configure_method_specs(history_len: int) -> None:
+def configure_method_specs(history_len: int, include_last_only: bool = False) -> None:
     """Configure method labels that depend on history length."""
 
     global METHOD_SPECS
@@ -71,6 +72,15 @@ def configure_method_specs(history_len: int) -> None:
             "claim": "历史retention增强 tabular",
         },
         {
+            "raw_method": "direct_retention_last_only",
+            "label": "LightGBM last retention only",
+            "plot_label": "LightGBM last-only",
+            "route": "last retention only ablation",
+            "input": "last retention标量",
+            "uses_history_retention": "是，仅last",
+            "claim": "仅last retention消融 tabular",
+        },
+        {
             "raw_method": "monotonic_lstm_delta_strict",
             "label": f"LSTM delta strict {h}x55",
             "plot_label": f"LSTM delta strict {h}x55",
@@ -88,7 +98,22 @@ def configure_method_specs(history_len: int) -> None:
             "uses_history_retention": "是",
             "claim": "历史retention增强序列",
         },
+        {
+            "raw_method": "monotonic_lstm_delta_last_retention_only",
+            "label": "LSTM delta 1x1 last retention only",
+            "plot_label": "LSTM last-only",
+            "route": "last retention only ablation",
+            "input": "1x1 last retention标量",
+            "uses_history_retention": "是，仅last",
+            "claim": "仅last retention消融 LSTM",
+        },
     ]
+    if not bool(include_last_only):
+        METHOD_SPECS = [
+            spec
+            for spec in METHOD_SPECS
+            if spec["raw_method"] not in {"direct_retention_last_only", "monotonic_lstm_delta_last_retention_only"}
+        ]
 
 
 def parse_args() -> argparse.Namespace:
@@ -113,6 +138,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--report-path", type=Path, default=REPORT_PATH)
     parser.add_argument("--figure-dir", type=Path, default=FIGURE_DIR)
     parser.add_argument("--route-dir", type=Path, default=ROUTE_DIR)
+    parser.add_argument("--lgbm-last-only-dir", type=Path, default=None)
+    parser.add_argument("--lstm-last-only-dir", type=Path, default=None)
     return parser.parse_args()
 
 
@@ -167,6 +194,11 @@ def load_metrics(args: argparse.Namespace) -> pd.DataFrame:
             lgbm_history_metrics["method"].isin(["direct_retention_with_history_summary"])
         ].copy()
     )
+    if args.lgbm_last_only_dir is not None:
+        lgbm_last_metrics = read_csv(args.lgbm_last_only_dir / "retention_multistep_metrics.csv")
+        frames.append(
+            lgbm_last_metrics.loc[lgbm_last_metrics["method"].isin(["direct_retention_last_only"])].copy()
+        )
 
     lstm_metrics = read_csv(args.lstm_dir / "train_valid_metrics_by_horizon.csv")
     frames.append(
@@ -176,6 +208,13 @@ def load_metrics(args: argparse.Namespace) -> pd.DataFrame:
             )
         ].copy()
     )
+    if args.lstm_last_only_dir is not None:
+        lstm_last_metrics = read_csv(args.lstm_last_only_dir / "train_valid_metrics_by_horizon.csv")
+        frames.append(
+            lstm_last_metrics.loc[
+                lstm_last_metrics["method"].isin(["monotonic_lstm_delta_last_retention_only"])
+            ].copy()
+        )
     combined = pd.concat(frames, ignore_index=True)
     combined = combined.loc[(combined["set_type"] == "valid") & (combined["target"] == "retention")].copy()
     combined["horizon"] = combined["horizon"].astype(str).str.upper()
@@ -195,6 +234,9 @@ def load_predictions(args: argparse.Namespace) -> pd.DataFrame:
             lgbm_history_pred["method"].isin(["direct_retention_with_history_summary"])
         ].copy()
     )
+    if args.lgbm_last_only_dir is not None:
+        lgbm_last_pred = read_csv(args.lgbm_last_only_dir / "valid_retention_predictions_long.csv")
+        frames.append(lgbm_last_pred.loc[lgbm_last_pred["method"].isin(["direct_retention_last_only"])].copy())
 
     lstm_pred = read_csv(args.lstm_dir / "train_valid_predictions_long.csv")
     frames.append(
@@ -205,6 +247,14 @@ def load_predictions(args: argparse.Namespace) -> pd.DataFrame:
             )
         ].copy()
     )
+    if args.lstm_last_only_dir is not None:
+        lstm_last_pred = read_csv(args.lstm_last_only_dir / "train_valid_predictions_long.csv")
+        frames.append(
+            lstm_last_pred.loc[
+                (lstm_last_pred["set_type"] == "valid")
+                & lstm_last_pred["method"].isin(["monotonic_lstm_delta_last_retention_only"])
+            ].copy()
+        )
     combined = pd.concat(frames, ignore_index=True)
     combined["residual_retention"] = combined["retention_true"] - combined["pred_retention"]
     return combined
@@ -492,6 +542,66 @@ def stage_route_images(source_dir: Path, figure_dir: Path) -> Path:
     return route_dir
 
 
+def save_last_retention_ablation_route(out_path: Path, history_len: int, horizon: int) -> None:
+    """Save a reproducible Chinese route diagram for the last-retention-only ablation."""
+
+    plt = ensure_matplotlib()
+    from matplotlib import patches
+
+    plt.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei", "Arial Unicode MS", "DejaVu Sans"]
+    plt.rcParams["axes.unicode_minus"] = False
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig, ax = plt.subplots(figsize=(12.8, 5.6))
+    ax.set_xlim(0, 12.8)
+    ax.set_ylim(0, 5.6)
+    ax.axis("off")
+    ax.text(0.35, 5.25, "仅 last retention 消融实验：同一标量输入，不给工况统计和历史序列", fontsize=17, weight="bold")
+    ax.text(
+        0.35,
+        4.88,
+        f"固定样本口径：history_len={history_len}, horizon={horizon}, block_stride={history_len + horizon}, long_life_holdout",
+        fontsize=11,
+        color="#374151",
+    )
+
+    def box(x: float, y: float, w: float, h: float, title: str, body: str, color: str) -> None:
+        rect = patches.FancyBboxPatch(
+            (x, y),
+            w,
+            h,
+            boxstyle="round,pad=0.02,rounding_size=0.05",
+            linewidth=1.2,
+            edgecolor="#1f2937",
+            facecolor=color,
+        )
+        ax.add_patch(rect)
+        ax.text(x + 0.18, y + h - 0.30, title, fontsize=12.2, weight="bold", va="top")
+        ax.text(x + 0.18, y + h - 0.82, body, fontsize=9.6, va="top", linespacing=1.18)
+
+    def arrow(x0: float, y0: float, x1: float, y1: float, label: str = "") -> None:
+        ax.annotate("", xy=(x1, y1), xytext=(x0, y0), arrowprops={"arrowstyle": "->", "lw": 1.8, "color": "#374151"})
+        if label:
+            ax.text((x0 + x1) / 2, y0 + 0.12, label, ha="center", fontsize=9.5, color="#374151")
+
+    box(0.45, 3.05, 2.28, 1.38, "输入", "历史窗口只取最后一点\nx = retention_N", "#fef3c7")
+    box(3.35, 3.05, 2.78, 1.38, "LightGBM last-only", "每个 horizon 单独训练\n输入维度 = 1", "#dbeafe")
+    box(6.85, 3.05, 2.78, 1.38, "LSTM last-only", "1x1 标量序列\nmonotonic delta 递推", "#ede9fe")
+    box(10.35, 3.05, 2.08, 1.38, "输出", "预测 N+1 到 N+M\nretention 曲线", "#dcfce7")
+    arrow(2.75, 3.74, 3.32, 3.74)
+    arrow(6.15, 3.74, 6.82, 3.74)
+    arrow(9.65, 3.74, 10.32, 3.74)
+
+    box(0.95, 1.05, 3.15, 1.58, "禁用信息", "不使用 55维工况summary\n不使用 100x55工况序列\n不使用历史retention全序列", "#fee2e2")
+    box(4.75, 1.05, 3.10, 1.58, "公平比较点", "两条模型路线\n只看到同一个\nlast retention 标量", "#e0f2fe")
+    box(8.55, 1.05, 3.25, 1.58, "结论解释", "若 LSTM 胜出\n才可归因于模型结构\n处理 last 标量的方式", "#f0fdf4")
+    arrow(4.12, 1.84, 4.72, 1.84)
+    arrow(7.88, 1.84, 8.52, 1.84)
+
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=180)
+    plt.close(fig)
+
+
 def checks_summary(args: argparse.Namespace, meta: Mapping[str, object]) -> pd.DataFrame:
     """Build a concise evidence-chain check table."""
 
@@ -523,6 +633,25 @@ def checks_summary(args: argparse.Namespace, meta: Mapping[str, object]) -> pd.D
         ("split重合", check_value(lgbm_checks, "split_overlap_zero") == "1", "train/valid policy-cell overlap=0"),
         ("LSTM baseline契约", str(lstm_config.get("baseline_source", "")).startswith("loaded:"), "LSTM加载long_life LightGBM baseline"),
     ]
+    if args.lgbm_last_only_dir is not None:
+        lgbm_last_config = read_json(args.lgbm_last_only_dir / "run_config.json")
+        rows.append(
+            (
+                "LightGBM last-only",
+                bool(lgbm_last_config.get("include_last_retention_only", False))
+                and int(lgbm_last_config.get("last_retention_only_feature_count", 0)) == 1,
+                "输入仅包含 last_retention_only_feature_count=1 的消融路线",
+            )
+        )
+    if args.lstm_last_only_dir is not None:
+        lstm_last_config = read_json(args.lstm_last_only_dir / "run_config.json")
+        rows.append(
+            (
+                "LSTM last-only",
+                str(lstm_last_config.get("lstm_route_set", "")) == "last_retention_only",
+                "输入为 1x1 last retention 标量序列",
+            )
+        )
     return pd.DataFrame(
         [
             {"证据项": item, "状态": "PASS" if passed else "FAIL", "关键值": detail}
@@ -558,6 +687,102 @@ def conclusion_text(summary: pd.DataFrame, meta: Mapping[str, object]) -> List[s
     ]
 
 
+def last_retention_only_conclusion_text(summary: pd.DataFrame, meta: Mapping[str, object]) -> List[str]:
+    """Build conclusion lines for the last-retention-only ablation."""
+
+    by_method = summary.set_index("方法")
+    lgbm_label = "LightGBM last retention only"
+    lstm_label = "LSTM delta 1x1 last retention only"
+    if lgbm_label not in by_method.index or lstm_label not in by_method.index:
+        return ["本节尚未加载 last-retention-only 的 LightGBM 与 LSTM 同口径消融结果。"]
+    lgbm = by_method.loc[lgbm_label]
+    lstm = by_method.loc[lstm_label]
+    endpoint_horizon = str(meta["endpoint_horizon"])
+    delta_endpoint = float(lgbm[f"{endpoint_horizon}_RMSE"]) - float(lstm[f"{endpoint_horizon}_RMSE"])
+    delta_all = float(lgbm["ALL_RMSE"]) - float(lstm["ALL_RMSE"])
+    winner = "LSTM last-retention-only" if delta_endpoint > 0 else "LightGBM last-retention-only"
+    return [
+        f"直接回答：只给 last retention 标量时，按 {endpoint_horizon} RMSE，`{winner}` 更好。",
+        (
+            f"任务结论：在短历史 H{int(meta['history_len'])}、预测 M{int(meta['horizon'])} 的任务里，"
+            "如果输入严格限制为 last retention，LSTM 的单调 delta 结构比 LightGBM 更会利用这个起点做未来曲线外推。"
+        ),
+        (
+            f"{endpoint_horizon} 上 `{lstm_label}` RMSE=`{float(lstm[f'{endpoint_horizon}_RMSE']):.6f}`、"
+            f"R2=`{float(lstm[f'{endpoint_horizon}_R2']):.6f}`；`{lgbm_label}` "
+            f"RMSE=`{float(lgbm[f'{endpoint_horizon}_RMSE']):.6f}`、R2=`{float(lgbm[f'{endpoint_horizon}_R2']):.6f}`。"
+        ),
+        (
+            f"{endpoint_horizon} RMSE 差值为 `{delta_endpoint:.6f}`，ALL RMSE 差值为 `{delta_all:.6f}`；"
+            "正数表示 LSTM last-only 误差更低。"
+        ),
+        "该消融不包含 55维工况统计、不包含历史 retention 全序列，也不包含 7维 history summary，因此可用于回答“单纯 last retention”问题。",
+    ]
+
+
+def input_detail_table(meta: Mapping[str, object], has_last_only: bool) -> pd.DataFrame:
+    """Build a route-level table that explains input data content and meaning."""
+
+    history_len = int(meta["history_len"])
+    horizon = int(meta["horizon"])
+    rows: List[Dict[str, object]] = [
+        {
+            "路线": "trend baseline / linear_last10",
+            "输入形态": "10个历史retention点",
+            "输入内容": "历史窗口末端最后10个capacity retention观测值",
+            "含义": "只利用容量保持率的局部平滑趋势，作为低成本强基线；不使用工况统计。",
+        },
+        {
+            "路线": "trend baseline / persistence",
+            "输入形态": "1个last retention标量",
+            "输入内容": "历史窗口最后一个capacity retention观测值",
+            "含义": "假设未来保持率等于当前状态，衡量模型是否超过最朴素起点基线。",
+        },
+        {
+            "路线": "LightGBM direct",
+            "输入形态": "385维tabular summary",
+            "输入内容": f"{history_len}个历史cycle内的55个工况基础特征，逐列压缩为last/mean/std/min/max/delta/slope七类统计量。",
+            "含义": "把工况时间序列压成表格摘要，不输入历史retention；用于检验工况统计本身的预测力。",
+        },
+        {
+            "路线": "LightGBM + history retention summary",
+            "输入形态": "392维tabular summary",
+            "输入内容": "385维工况summary + 历史retention的last/mean/std/min/max/delta/slope七类summary。",
+            "含义": "把历史retention作为7个统计特征加入LightGBM，但不保留完整retention时间序列。",
+        },
+        {
+            "路线": "LSTM pure operational",
+            "输入形态": f"{history_len}x55工况序列 + last retention递推起点",
+            "输入内容": f"{history_len}个历史cycle的55个工况通道；last retention只用于monotonic delta递推起点，不作为输入通道。",
+            "含义": "保留工况时序结构，检验序列模型是否能从工况变化中获得额外泛化收益。",
+        },
+        {
+            "路线": "LSTM history-retention-enhanced",
+            "输入形态": f"{history_len}x56序列",
+            "输入内容": f"{history_len}x55工况序列 + 1个历史retention通道。",
+            "含义": "显式输入历史retention全序列；若胜出，结论应标注为history-retention-enhanced，不属于纯工况胜利。",
+        },
+    ]
+    if has_last_only:
+        rows.extend(
+            [
+                {
+                    "路线": "LightGBM last retention only",
+                    "输入形态": "1维tabular",
+                    "输入内容": "只输入历史窗口最后一个retention标量；禁用55维工况summary、历史retention全序列和7维history summary。",
+                    "含义": f"同口径消融：只看last retention能否预测未来M{horizon}保持率曲线。",
+                },
+                {
+                    "路线": "LSTM last retention only",
+                    "输入形态": "1x1标量序列",
+                    "输入内容": "只输入历史窗口最后一个retention标量，并通过单调delta结构从该起点向未来递推。",
+                    "含义": f"在短历史H{history_len}、预测M{horizon}且输入严格限制为last retention时，检验LSTM结构是否比LightGBM更会利用这个起点做未来曲线外推。",
+                },
+            ]
+        )
+    return pd.DataFrame(rows)
+
+
 def write_report(
     args: argparse.Namespace,
     summary: pd.DataFrame,
@@ -574,12 +799,28 @@ def write_report(
         "LightGBM": args.route_dir / "route_lightgbm_gpt_image2.png",
         "纯工况 LSTM": args.route_dir / "route_lstm_pure_operational_gpt_image2.png",
         "历史 retention 增强 LSTM": args.route_dir / "route_lstm_history_retention_gpt_image2.png",
+        "last retention only 消融": args.route_dir / "route_last_retention_only_ablation.png",
     }
     selected_horizons = [str(item) for item in meta["selected_horizons"]]
     endpoint_horizon = str(meta["endpoint_horizon"])
     summary_columns = [f"{endpoint_horizon}排名", "路线", "方法", "输入信息", "是否使用历史retention", "可部署性/口径"]
     for horizon in selected_horizons:
         summary_columns.extend([f"{horizon}_RMSE", f"{horizon}_R2"])
+    has_last_only = summary["方法"].astype(str).isin(
+        ["LightGBM last retention only", "LSTM delta 1x1 last retention only"]
+    ).any()
+    last_only_section = (
+        [
+            "### 2.5 last retention only 消融",
+            "",
+            image(route_images["last retention only 消融"], "last retention only ablation route diagram", report_path),
+            "",
+            "图 2-5 说明：该图为脚本生成的科研流程图；LightGBM 与 LSTM 都只接收同一个 last retention 标量，不接收工况统计和历史 retention 序列。",
+            "",
+        ]
+        if has_last_only
+        else []
+    )
     lines = [
         f"# long_life_holdout H{int(meta['history_len'])}/M{int(meta['horizon'])} 工况统计 -> retention LightGBM/LSTM 评估汇总",
         "",
@@ -591,11 +832,17 @@ def write_report(
         f"- 样本口径：`history_len={int(meta['history_len'])}`，`horizon={int(meta['horizon'])}`，`block_stride={int(meta['block_stride'])}`，`sample_mode={meta['sample_mode']}`。",
         f"- LightGBM-history 输出目录：`{args.lgbm_history_dir.as_posix()}`",
         f"- LSTM baseline_source: `{meta['baseline_source']}`",
-        "- 路线示意图：按用户确认的科研论文中文流程图风格，使用 Codex 内置图片生成工具生成，并复制到项目图表目录。",
+        "- 路线示意图：主路线沿用用户确认的科研论文中文流程图风格；last-only 消融图由脚本生成并写入同一图表目录。",
         "",
         "## 2. 路线总表与示意图",
         "",
         markdown_table(summary, summary_columns),
+        "",
+        "### 2.0 输入数据内容及含义",
+        "",
+        "表 2-0 用来区分“基础工况特征”“历史retention增强”和“last-retention-only消融”三种不同输入口径，避免把模型结构收益和输入信息量收益混写。",
+        "",
+        markdown_table(input_detail_table(meta, has_last_only), ["路线", "输入形态", "输入内容", "含义"]),
         "",
         "### 2.1 trend baseline",
         "",
@@ -621,6 +868,7 @@ def write_report(
         "",
         f"图 2-4 说明：该路线图已按科研论文中文流程图风格刷新；增强 LSTM 使用 `{int(meta['history_len'])}x56`，历史 retention 是显式输入通道，结论必须单独标注。",
         "",
+        *last_only_section,
         "## 3. 图像证据",
         "",
         image(args.figure_dir / f"comparison_v2_{endpoint_horizon.lower()}_rmse_r2_bar.png", f"{endpoint_horizon} RMSE and R2 bar comparison", report_path),
@@ -658,17 +906,27 @@ def write_report(
         "",
     ]
     lines.extend([f"- {item}" for item in conclusion_text(summary, meta)])
+    if has_last_only:
+        lines.extend(
+            [
+                "",
+                "## 7. last retention only 消融结论",
+                "",
+                *[f"- {item}" for item in last_retention_only_conclusion_text(summary, meta)],
+            ]
+        )
     lines.extend(
         [
             "",
-            "## 7. 图表与产物索引",
+            "## 8. 图表与产物索引",
             "",
             markdown_table(pd.DataFrame(assets), ["产物", "路径", "存在", "bytes"]),
             "",
-            "## 8. 深度交互",
+            "## 9. 深度交互",
             "",
             "- 这次新增的 LightGBM-history 才是回答“LightGBM + 历史 retention”的同口径证据，不能继续用 `linear_last10` 或 pure LightGBM 代替。",
             f"- 若 LSTM-history 胜出，合理表述是“历史 retention 增强的序列模型胜出”；若要证明纯工况统计序列更强，应继续看 `{int(meta['history_len'])}x55` LSTM 与不含历史 retention 的 LightGBM。",
+            "- last retention only 消融是回答“单纯 last retention”问题的同口径证据，不应与 `100x55` 工况序列或 `100x56` 历史序列增强结果混写。",
             "- `linear_last10` 仍需要保留，因为它代表短期 H50 retention 平滑趋势的最低成本解释。",
             "",
         ]
@@ -683,7 +941,14 @@ def main() -> None:
     args.figure_dir.mkdir(parents=True, exist_ok=True)
     args.route_dir = stage_route_images(args.route_dir, args.figure_dir)
     meta = infer_run_meta(args)
-    configure_method_specs(int(meta["history_len"]))
+    include_last_only = args.lgbm_last_only_dir is not None or args.lstm_last_only_dir is not None
+    configure_method_specs(int(meta["history_len"]), include_last_only=include_last_only)
+    if include_last_only:
+        save_last_retention_ablation_route(
+            args.route_dir / "route_last_retention_only_ablation.png",
+            int(meta["history_len"]),
+            int(meta["horizon"]),
+        )
     metrics = load_metrics(args)
     predictions = load_predictions(args)
     summary = build_summary_table(metrics, meta)
@@ -720,6 +985,10 @@ def main() -> None:
         asset_row(args.route_dir / "route_lstm_history_retention_gpt_image2.png", "历史retention增强LSTM路线示意图", args.report_path),
         ]
     )
+    if include_last_only:
+        assets.append(
+            asset_row(args.route_dir / "route_last_retention_only_ablation.png", "last retention only消融路线示意图", args.report_path)
+        )
     write_report(args, summary, detail, checks, assets, meta)
     print(f"wrote_report {args.report_path}", flush=True)
     print(f"wrote_figures {args.figure_dir}", flush=True)

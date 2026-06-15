@@ -147,6 +147,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Train an additional direct_retention_with_history_summary route using seven historical retention summary features.",
     )
+    parser.add_argument(
+        "--include-last-retention-only",
+        action="store_true",
+        help="Train an additional direct_retention_last_only route using only the last historical retention scalar.",
+    )
     parser.add_argument("--model-family", choices=["lightgbm"], default="lightgbm")
     parser.add_argument("--q-min", type=float, default=0.3)
     parser.add_argument("--q-max", type=float, default=1.3)
@@ -476,6 +481,13 @@ def build_history_retention_matrix(samples: Sequence[BlockSample]) -> Tuple[np.n
     return np.vstack(rows).astype(np.float32), columns
 
 
+def build_last_retention_matrix(samples: Sequence[BlockSample]) -> Tuple[np.ndarray, List[str]]:
+    """Create a single-feature matrix containing only last historical retention."""
+
+    rows = [[float(sample.history_retention[-1])] for sample in samples]
+    return np.asarray(rows, dtype=np.float32), ["history_retention__last_only"]
+
+
 def future_arrays(samples: Sequence[BlockSample]) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Stack future arrays for dQdV, retention, q_ref, q_discharge, and cycles."""
 
@@ -560,6 +572,8 @@ def train_bridge_and_direct_models(
     seed: int,
     x_train_with_history_retention: Optional[np.ndarray] = None,
     x_valid_with_history_retention: Optional[np.ndarray] = None,
+    x_train_last_retention_only: Optional[np.ndarray] = None,
+    x_valid_last_retention_only: Optional[np.ndarray] = None,
 ) -> Tuple[Dict[str, np.ndarray], pd.DataFrame]:
     """Train oracle bridge, deployable bridge, direct retention models, and evaluate baselines."""
 
@@ -582,6 +596,10 @@ def train_bridge_and_direct_models(
     if use_history_retention:
         preds["direct_retention_with_history_summary"] = np.zeros_like(y_valid_ret, dtype=np.float32)
         train_preds["direct_retention_with_history_summary"] = np.zeros_like(y_train_ret, dtype=np.float32)
+    use_last_retention_only = x_train_last_retention_only is not None and x_valid_last_retention_only is not None
+    if use_last_retention_only:
+        preds["direct_retention_last_only"] = np.zeros_like(y_valid_ret, dtype=np.float32)
+        train_preds["direct_retention_last_only"] = np.zeros_like(y_train_ret, dtype=np.float32)
     for step in range(horizon):
         bridge = make_lgbm(seed + 1000 + step)
         bridge.fit(y_train_dqdv[:, step, :], y_train_ret[:, step])
@@ -603,6 +621,16 @@ def train_bridge_and_direct_models(
             ).astype(np.float32)
             preds["direct_retention_with_history_summary"][:, step] = direct_with_history.predict(
                 x_valid_with_history_retention
+            ).astype(np.float32)
+
+        if use_last_retention_only:
+            direct_last_only = make_lgbm(seed + 3000 + step)
+            direct_last_only.fit(x_train_last_retention_only, y_train_ret[:, step])
+            train_preds["direct_retention_last_only"][:, step] = direct_last_only.predict(
+                x_train_last_retention_only
+            ).astype(np.float32)
+            preds["direct_retention_last_only"][:, step] = direct_last_only.predict(
+                x_valid_last_retention_only
             ).astype(np.float32)
 
     rows: List[Dict[str, object]] = []
@@ -1049,6 +1077,13 @@ def build_dataset_checks(
             1,
             "last,mean,std,min,max,delta,slope when enabled",
         ),
+        ("include_last_retention_only", int(bool(args.include_last_retention_only)), 1, "optional LightGBM last-retention-only route flag"),
+        (
+            "last_retention_only_feature_count",
+            1 if bool(args.include_last_retention_only) else 0,
+            1,
+            "single last historical retention scalar when enabled",
+        ),
         ("forbidden_input_columns_present", int(stats.get("forbidden_input_columns_present", 0)), int(stats.get("forbidden_input_columns_present", 0) == 0), ""),
         ("target_dim", int(len(target_cols)), int(len(target_cols) == 4 if args.target_pack == "compact4" else len(target_cols) > 0), ",".join(target_cols)),
         ("train_policy_cell_count", int(len(train_keys)), int(len(train_keys) > 0), ""),
@@ -1246,13 +1281,19 @@ def run(args: argparse.Namespace) -> Dict[str, object]:
     x_train, history_columns = build_history_matrix(train_samples, feature_cols, str(args.history_representation))
     x_valid, _history_columns_valid = build_history_matrix(valid_samples, feature_cols, str(args.history_representation))
     history_retention_columns: List[str] = []
+    last_retention_only_columns: List[str] = []
     x_train_with_history_retention: Optional[np.ndarray] = None
     x_valid_with_history_retention: Optional[np.ndarray] = None
+    x_train_last_retention_only: Optional[np.ndarray] = None
+    x_valid_last_retention_only: Optional[np.ndarray] = None
     if bool(args.include_history_retention_summary):
         train_history_retention, history_retention_columns = build_history_retention_matrix(train_samples)
         valid_history_retention, _valid_history_retention_columns = build_history_retention_matrix(valid_samples)
         x_train_with_history_retention = np.hstack([x_train, train_history_retention]).astype(np.float32)
         x_valid_with_history_retention = np.hstack([x_valid, valid_history_retention]).astype(np.float32)
+    if bool(args.include_last_retention_only):
+        x_train_last_retention_only, last_retention_only_columns = build_last_retention_matrix(train_samples)
+        x_valid_last_retention_only, _valid_last_retention_only_columns = build_last_retention_matrix(valid_samples)
     y_train_dqdv, y_train_ret, _qref_train, _q_train, _future_cycles_train = future_arrays(train_samples)
     y_valid_dqdv, y_valid_ret, _qref_valid, _q_valid, _future_cycles_valid = future_arrays(valid_samples)
     train_persistence = build_persistence(train_samples)
@@ -1286,12 +1327,16 @@ def run(args: argparse.Namespace) -> Dict[str, object]:
         seed=int(args.random_seed),
         x_train_with_history_retention=x_train_with_history_retention,
         x_valid_with_history_retention=x_valid_with_history_retention,
+        x_train_last_retention_only=x_train_last_retention_only,
+        x_valid_last_retention_only=x_valid_last_retention_only,
     )
 
     block_metadata_frame(samples).to_csv(args.output_dir / "block_samples.csv", index=False, encoding=ENCODING)
     write_feature_columns(args.output_dir / "history_feature_columns.csv", history_columns)
     if history_retention_columns:
         write_feature_columns(args.output_dir / "history_retention_feature_columns.csv", history_retention_columns)
+    if last_retention_only_columns:
+        write_feature_columns(args.output_dir / "last_retention_only_feature_columns.csv", last_retention_only_columns)
     dqdv_metrics.to_csv(args.output_dir / "dqdv_multistep_metrics.csv", index=False, encoding=ENCODING)
     retention_metrics.to_csv(args.output_dir / "retention_multistep_metrics.csv", index=False, encoding=ENCODING)
     dqdv_long = dqdv_predictions_long(valid_samples, target_cols, pred_valid_dqdv)
@@ -1346,14 +1391,17 @@ def run(args: argparse.Namespace) -> Dict[str, object]:
         "target_cols": list(target_cols),
         "history_representation": str(args.history_representation),
         "include_history_retention_summary": bool(args.include_history_retention_summary),
+        "include_last_retention_only": bool(args.include_last_retention_only),
         "history_feature_count": int(len(history_columns)),
         "history_retention_summary_feature_count": int(len(history_retention_columns)),
+        "last_retention_only_feature_count": int(len(last_retention_only_columns)),
         "model_family": str(args.model_family),
         "train_blocks": int(len(train_samples)),
         "valid_blocks": int(len(valid_samples)),
         "input_feature_columns": list(feature_cols),
         "history_feature_columns": list(history_columns),
         "history_retention_summary_columns": list(history_retention_columns),
+        "last_retention_only_columns": list(last_retention_only_columns),
     }
     (args.output_dir / "run_config.json").write_text(json.dumps(run_config, ensure_ascii=False, indent=2), encoding="utf-8")
     report = build_report(args, checks, dqdv_metrics, retention_metrics, args.output_dir)

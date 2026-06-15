@@ -251,6 +251,29 @@ with open("logs/session_2026-03-24.md", "a") as f:
 - 优先修改现有代码，而不是重写。
 - 优先以最小改动实现目标。
 
+### 13.7 Colab 长任务验收门槛
+
+凡是修改训练入口、Colab notebook、输出目录规则、checkpoint、resume 逻辑、target pack、模型输入/输出维度或会影响云端训练成本的参数，必须先完成本地或小样本 `colab_contract_smoke` 验收，再建议用户在 Colab 执行正式长任务。
+
+最低验收项：
+
+- CLI 契约检查：`--help` 可运行；默认参数、显式参数优先级、关键枚举值（如 `target_pack`）符合预期。
+- Notebook 命令一致性检查：notebook 生成的命令、脚本实际打印的输出目录、后续检查 cell 读取的目录必须一致。
+- 路径规则检查：显式传入的 `--output-dir` / `--full-refresh-output-dir` 优先于脚本自动命名；禁止重复追加 `_smoke`、`_full` 等后缀。
+- Target 维度检查：修改 dQdV/retention 目标后，必须扫描代码、notebook、Markdown、报告模板，确认旧目标名、旧维度描述、旧输出列检查没有残留。
+- 最小链路检查：必须跑通 smoke tune、smoke full-refresh，并确认关键产物存在，包括 metrics、predictions、run_config、report、loss 曲线、checkpoint。
+- 恢复训练检查：涉及 checkpoint 或 resume 的改动，必须用已有或构造的 `latest.pt` 验证 `--resume-interrupted` / `--full-refresh-resume-interrupted` 能恢复，且日志明确打印恢复 epoch。
+- 版本兼容检查：checkpoint 读写必须考虑 Colab 当前 PyTorch 行为，尤其是 `torch.load(weights_only=...)` 兼容性；不得把恢复训练错误留给正式 Colab 任务暴露。
+- 输出检查：smoke 产物中必须验证目标维度、关键模型名、关键指标列和预测列是否与配置一致。
+
+默认执行顺序：
+
+```text
+接口契约稳定 -> 路径与恢复机制稳定 -> smoke 产物闭环 -> 正式训练
+```
+
+禁止以“先上云跑正式任务，再根据报错补修”的方式处理高成本训练链路。若因数据规模或环境限制无法完整执行上述验收，必须在反馈中明确说明未验证项、风险和建议的最小替代验证。
+
 ---
 
 如与用户在对话中的最新明确指令冲突，以用户最新指令为准。

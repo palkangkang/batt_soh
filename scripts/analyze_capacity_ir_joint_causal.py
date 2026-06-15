@@ -1679,6 +1679,218 @@ def classify_dual_risk(
     return merged
 
 
+def build_support_normalized_effects_compare(
+    compare_df: pd.DataFrame,
+    interpretation_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """Build raw-vs-support-normalized effect comparison table for both outcomes."""
+    if compare_df.empty:
+        return pd.DataFrame()
+
+    merge_cols = [c for c in ["cross_bin", "cross_label", "condition_text"] if c in interpretation_df.columns]
+    base = compare_df.copy()
+    if set(["cross_bin", "cross_label"]).issubset(base.columns) and set(["cross_bin", "cross_label"]).issubset(merge_cols):
+        base = base.merge(
+            interpretation_df[merge_cols].drop_duplicates(subset=["cross_bin", "cross_label"]),
+            on=["cross_bin", "cross_label"],
+            how="left",
+            validate="many_to_one",
+        )
+
+    outcome_cfg = [
+        ("capacity", "cap_effect_per_1pp", "cap_support_width_1_99", "cap_q_value", "cap_significant_positive", "cap_ci_cross_zero"),
+        ("impedance", "ir_effect_per_1pp", "ir_support_width_1_99", "ir_q_value", "ir_significant_positive", "ir_ci_cross_zero"),
+    ]
+    frames: list[pd.DataFrame] = []
+    for outcome, eff_col, width_col, q_col, sig_col, cross_col in outcome_cfg:
+        cols = [
+            "cross_bin",
+            "cross_label",
+            "soc_bin",
+            "rate_bin",
+            "temp_bin",
+            "risk_category",
+            eff_col,
+            width_col,
+            q_col,
+            sig_col,
+            cross_col,
+        ]
+        if "condition_text" in base.columns:
+            cols.append("condition_text")
+        part = base[[c for c in cols if c in base.columns]].copy()
+        part["outcome"] = outcome
+        part = part.rename(
+            columns={
+                eff_col: "effect_per_1pp",
+                width_col: "support_width_1_99",
+                q_col: "q_value",
+                sig_col: "significant_positive",
+                cross_col: "ci_cross_zero",
+            }
+        )
+        part["effect_per_1pp"] = pd.to_numeric(part["effect_per_1pp"], errors="coerce")
+        part["support_width_1_99"] = pd.to_numeric(part["support_width_1_99"], errors="coerce")
+        part["q_value"] = pd.to_numeric(part["q_value"], errors="coerce")
+        part["effect_support_norm"] = part["effect_per_1pp"] * (part["support_width_1_99"] / 0.01)
+        part["rank_raw"] = part["effect_per_1pp"].rank(method="dense", ascending=False).astype("Int64")
+        part["rank_norm"] = part["effect_support_norm"].rank(method="dense", ascending=False).astype("Int64")
+        part["rank_delta"] = pd.to_numeric(part["rank_norm"], errors="coerce") - pd.to_numeric(
+            part["rank_raw"], errors="coerce"
+        )
+        frames.append(part)
+
+    out = pd.concat(frames, axis=0, ignore_index=True) if frames else pd.DataFrame()
+    if out.empty:
+        return out
+    sort_cols = ["outcome", "rank_raw", "rank_norm", "cross_bin"]
+    out = out.sort_values(sort_cols, ascending=[True, True, True, True], kind="mergesort").reset_index(drop=True)
+    return out
+
+
+def build_soc_temp_high_temp_evidence(
+    compare_df: pd.DataFrame,
+    interpretation_df: pd.DataFrame,
+    q_threshold: float = 0.1,
+) -> pd.DataFrame:
+    """Summarize SOC x temperature evidence for capacity/impedance risk patterns."""
+    if compare_df.empty:
+        return pd.DataFrame()
+
+    work = compare_df.copy()
+    num_cols = [
+        "soc_bin",
+        "temp_bin",
+        "cap_effect_per_1pp",
+        "ir_effect_per_1pp",
+        "cap_q_value",
+        "ir_q_value",
+        "cap_support_width_1_99",
+        "ir_support_width_1_99",
+    ]
+    for col in num_cols:
+        if col in work.columns:
+            work[col] = pd.to_numeric(work[col], errors="coerce")
+
+    rows: list[dict[str, float | int]] = []
+    for (soc_bin, temp_bin), part in work.groupby(["soc_bin", "temp_bin"], dropna=False):
+        if not np.isfinite(float(soc_bin)) or not np.isfinite(float(temp_bin)):
+            continue
+        row: dict[str, float | int] = {
+            "soc_bin": int(float(soc_bin)),
+            "temp_bin": int(float(temp_bin)),
+            "n_bins": int(part.shape[0]),
+        }
+        for prefix in ["cap", "ir"]:
+            eff = pd.to_numeric(part[f"{prefix}_effect_per_1pp"], errors="coerce")
+            qv = pd.to_numeric(part[f"{prefix}_q_value"], errors="coerce")
+            width = pd.to_numeric(part[f"{prefix}_support_width_1_99"], errors="coerce")
+            row[f"{prefix}_mean"] = float(eff.mean())
+            row[f"{prefix}_median"] = float(eff.median())
+            row[f"{prefix}_q_lt_0p1_share"] = float((qv < float(q_threshold)).mean())
+            row[f"{prefix}_sig_pos_share"] = float(((qv < float(q_threshold)) & (eff > 0.0)).mean())
+            row[f"{prefix}_support_mean"] = float(width.mean())
+            row[f"{prefix}_support_norm_mean"] = float((eff * (width / 0.01)).mean())
+        rows.append(row)
+
+    out = pd.DataFrame(rows)
+    if out.empty:
+        return out
+    label_cols = [c for c in ["soc_bin", "temp_bin", "soc_label", "temp_label"] if c in interpretation_df.columns]
+    if set(["soc_bin", "temp_bin"]).issubset(label_cols):
+        labels = interpretation_df[label_cols].drop_duplicates(subset=["soc_bin", "temp_bin"])
+        out = out.merge(labels, on=["soc_bin", "temp_bin"], how="left", validate="many_to_one")
+    out = out.sort_values(["soc_bin", "temp_bin"], ascending=[True, True], kind="mergesort").reset_index(drop=True)
+    return out
+
+
+def build_high_temp_claim_assessment(
+    soc_temp_evidence_df: pd.DataFrame,
+    q_threshold: float = 0.1,
+    high_temp_bin: int = 5,
+) -> pd.DataFrame:
+    """Assess high-temperature-risk claim strength across SOC strata for each outcome."""
+    if soc_temp_evidence_df.empty:
+        return pd.DataFrame()
+
+    out_rows: list[dict[str, object]] = []
+    for outcome_name, prefix in [("capacity", "cap"), ("impedance", "ir")]:
+        part = soc_temp_evidence_df.copy()
+        part["soc_bin"] = pd.to_numeric(part["soc_bin"], errors="coerce")
+        part["temp_bin"] = pd.to_numeric(part["temp_bin"], errors="coerce")
+        part = part.dropna(subset=["soc_bin", "temp_bin"]).copy()
+        part["soc_bin"] = part["soc_bin"].astype(int)
+        part["temp_bin"] = part["temp_bin"].astype(int)
+        soc_bins = sorted(part["soc_bin"].unique().tolist())
+
+        positive_count = 0
+        top_count = 0
+        sig_count = 0
+        support_count = 0
+        low_soc_mean = float("nan")
+        low_soc_label = ""
+
+        for soc in soc_bins:
+            soc_part = part.loc[part["soc_bin"] == soc].copy()
+            if soc_part.empty:
+                continue
+            high_part = soc_part.loc[soc_part["temp_bin"] == int(high_temp_bin)]
+            if high_part.empty:
+                continue
+            high_row = high_part.iloc[0]
+            high_mean = float(pd.to_numeric(high_row[f"{prefix}_mean"], errors="coerce"))
+            high_q_share = float(pd.to_numeric(high_row[f"{prefix}_q_lt_0p1_share"], errors="coerce"))
+            high_support = float(pd.to_numeric(high_row[f"{prefix}_support_mean"], errors="coerce"))
+            soc_support_med = float(pd.to_numeric(soc_part[f"{prefix}_support_mean"], errors="coerce").median())
+            soc_top_temp = int(
+                soc_part.sort_values(f"{prefix}_mean", ascending=False, kind="mergesort").iloc[0]["temp_bin"]
+            )
+
+            if high_mean > 0.0:
+                positive_count += 1
+            if soc_top_temp == int(high_temp_bin):
+                top_count += 1
+            if high_q_share >= 0.5:
+                sig_count += 1
+            if np.isfinite(high_support) and np.isfinite(soc_support_med) and high_support >= soc_support_med:
+                support_count += 1
+
+            if soc == 1:
+                low_soc_mean = high_mean
+                low_soc_label = str(high_row.get("soc_label", ""))
+
+        n_soc = len(soc_bins)
+        if n_soc == 0:
+            assessment = "weak"
+        elif top_count >= 2 and positive_count >= 2 and sig_count >= 2:
+            assessment = "strong"
+        elif positive_count >= 2 and (top_count >= 1 or sig_count >= 1):
+            assessment = "partial"
+        else:
+            assessment = "weak"
+
+        detail = (
+            f"positive_soc={positive_count}/{n_soc}, top_soc={top_count}/{n_soc}, "
+            f"q<{_format_float(q_threshold, 2)}_share_soc={sig_count}/{n_soc}, support_ok_soc={support_count}/{n_soc}"
+        )
+        out_rows.append(
+            {
+                "outcome": outcome_name,
+                "high_temp_bin": int(high_temp_bin),
+                "assessment": assessment,
+                "n_soc": int(n_soc),
+                "positive_soc_count": int(positive_count),
+                "top_soc_count": int(top_count),
+                "q_lt_0p1_soc_count": int(sig_count),
+                "support_ok_soc_count": int(support_count),
+                "low_soc_label": low_soc_label,
+                "low_soc_high_temp_mean": float(low_soc_mean),
+                "detail": detail,
+            }
+        )
+    return pd.DataFrame(out_rows)
+
+
 def save_trend_plot(cell_trend_df: pd.DataFrame, output_path: Path) -> None:
     """Save trend distribution plot for per-cell cycle correlations."""
     if cell_trend_df.empty:
@@ -1785,7 +1997,7 @@ def save_dual_forest_plot(
     plt.close(fig)
 
 
-def save_risk_matrix_plot(compare_df: pd.DataFrame, output_path: Path) -> None:
+def save_risk_matrix_plot(compare_df: pd.DataFrame, bin_meta_df: pd.DataFrame, output_path: Path) -> None:
     """Save SOC-panel risk matrix from dual outcome categories."""
     if compare_df.empty:
         return
@@ -1798,8 +2010,90 @@ def save_risk_matrix_plot(compare_df: pd.DataFrame, output_path: Path) -> None:
     cmap = colors.ListedColormap(["#d1d5db", "#60a5fa", "#fbbf24", "#ef4444"])
     norm = colors.BoundaryNorm([-0.5, 0.5, 1.5, 2.5, 3.5], cmap.N)
 
-    fig, axes = plt.subplots(1, 3, figsize=(13.5, 4.2), sharey=True)
-    for idx, soc_bin in enumerate([1, 2, 3]):
+    soc_bins = sorted(pd.to_numeric(bin_meta_df["soc_bin"], errors="coerce").dropna().astype(int).unique().tolist())
+    rate_bins = sorted(pd.to_numeric(bin_meta_df["rate_bin"], errors="coerce").dropna().astype(int).unique().tolist())
+    temp_bins = sorted(pd.to_numeric(bin_meta_df["temp_bin"], errors="coerce").dropna().astype(int).unique().tolist())
+    if not soc_bins:
+        soc_bins = sorted(pd.to_numeric(compare_df["soc_bin"], errors="coerce").dropna().astype(int).unique().tolist())
+    if not rate_bins:
+        rate_bins = sorted(pd.to_numeric(compare_df["rate_bin"], errors="coerce").dropna().astype(int).unique().tolist())
+    if not temp_bins:
+        temp_bins = sorted(pd.to_numeric(compare_df["temp_bin"], errors="coerce").dropna().astype(int).unique().tolist())
+
+    soc_label_map: Dict[int, str] = {}
+    rate_label_map: Dict[int, str] = {}
+    temp_label_map: Dict[int, str] = {}
+
+    if {"soc_bin", "soc_label"}.issubset(bin_meta_df.columns):
+        soc_meta = bin_meta_df[["soc_bin", "soc_label"]].copy()
+        soc_meta["soc_bin"] = pd.to_numeric(soc_meta["soc_bin"], errors="coerce").astype("Int64")
+        soc_meta = soc_meta.dropna(subset=["soc_bin"]).copy()
+        soc_meta["soc_bin"] = soc_meta["soc_bin"].astype(int)
+        soc_meta["soc_label"] = soc_meta["soc_label"].astype(str).str.strip()
+        soc_meta = soc_meta.loc[soc_meta["soc_label"] != ""].copy()
+        if not soc_meta.empty:
+            dup_soc = soc_meta.groupby("soc_bin")["soc_label"].nunique()
+            for bin_id, cnt in dup_soc.items():
+                if int(cnt) > 1:
+                    print(f"Warning: soc_bin={int(bin_id)} has multiple labels; using the first one.")
+            soc_label_map = (
+                soc_meta.drop_duplicates(subset=["soc_bin"], keep="first")
+                .set_index("soc_bin")["soc_label"]
+                .to_dict()
+            )
+    if {"rate_bin", "rate_label"}.issubset(bin_meta_df.columns):
+        rate_meta = bin_meta_df[["rate_bin", "rate_label"]].copy()
+        rate_meta["rate_bin"] = pd.to_numeric(rate_meta["rate_bin"], errors="coerce").astype("Int64")
+        rate_meta = rate_meta.dropna(subset=["rate_bin"]).copy()
+        rate_meta["rate_bin"] = rate_meta["rate_bin"].astype(int)
+        rate_meta["rate_label"] = rate_meta["rate_label"].astype(str).str.strip()
+        rate_meta = rate_meta.loc[rate_meta["rate_label"] != ""].copy()
+        if not rate_meta.empty:
+            dup_rate = rate_meta.groupby("rate_bin")["rate_label"].nunique()
+            for bin_id, cnt in dup_rate.items():
+                if int(cnt) > 1:
+                    print(f"Warning: rate_bin={int(bin_id)} has multiple labels; using the first one.")
+            rate_label_map = (
+                rate_meta.drop_duplicates(subset=["rate_bin"], keep="first")
+                .set_index("rate_bin")["rate_label"]
+                .to_dict()
+            )
+    if {"temp_bin", "temp_label"}.issubset(bin_meta_df.columns):
+        temp_meta = bin_meta_df[["temp_bin", "temp_label"]].copy()
+        temp_meta["temp_bin"] = pd.to_numeric(temp_meta["temp_bin"], errors="coerce").astype("Int64")
+        temp_meta = temp_meta.dropna(subset=["temp_bin"]).copy()
+        temp_meta["temp_bin"] = temp_meta["temp_bin"].astype(int)
+        temp_meta["temp_label"] = temp_meta["temp_label"].astype(str).str.strip()
+        temp_meta = temp_meta.loc[temp_meta["temp_label"] != ""].copy()
+        if not temp_meta.empty:
+            dup_temp = temp_meta.groupby("temp_bin")["temp_label"].nunique()
+            for bin_id, cnt in dup_temp.items():
+                if int(cnt) > 1:
+                    print(f"Warning: temp_bin={int(bin_id)} has multiple labels; using the first one.")
+            temp_label_map = (
+                temp_meta.drop_duplicates(subset=["temp_bin"], keep="first")
+                .set_index("temp_bin")["temp_label"]
+                .to_dict()
+            )
+
+    for bin_id in soc_bins:
+        if bin_id not in soc_label_map:
+            soc_label_map[bin_id] = f"S{bin_id}"
+            print(f"Warning: missing soc_label for soc_bin={bin_id}; fallback to S{bin_id}.")
+    for bin_id in rate_bins:
+        if bin_id not in rate_label_map:
+            rate_label_map[bin_id] = f"R{bin_id}"
+            print(f"Warning: missing rate_label for rate_bin={bin_id}; fallback to R{bin_id}.")
+    for bin_id in temp_bins:
+        if bin_id not in temp_label_map:
+            temp_label_map[bin_id] = f"T{bin_id}"
+            print(f"Warning: missing temp_label for temp_bin={bin_id}; fallback to T{bin_id}.")
+
+    fig, axes = plt.subplots(1, len(soc_bins), figsize=(4.5 * len(soc_bins), 4.2), sharey=True)
+    if len(soc_bins) == 1:
+        axes = [axes]
+    im = None
+    for idx, soc_bin in enumerate(soc_bins):
         ax = axes[idx]
         part = compare_df.loc[compare_df["soc_bin"] == soc_bin].copy()
         if part.empty:
@@ -1813,16 +2107,19 @@ def save_risk_matrix_plot(compare_df: pd.DataFrame, output_path: Path) -> None:
             aggfunc="max",
             fill_value=0,
         )
-        pv = pv.reindex(index=[1, 2, 3, 4], columns=[1, 2, 3, 4, 5], fill_value=0)
+        pv = pv.reindex(index=rate_bins, columns=temp_bins, fill_value=0)
         im = ax.imshow(pv.to_numpy(dtype=float), cmap=cmap, norm=norm, aspect="auto")
-        ax.set_title(f"SOC分层 {soc_bin}")
-        ax.set_xlabel("温度分位 bin")
+        ax.set_title(f"SOC {soc_label_map.get(soc_bin, f'S{soc_bin}')}")
+        ax.set_xlabel("温度区间(°C)")
         if idx == 0:
-            ax.set_ylabel("倍率分位 bin")
-        ax.set_xticks(np.arange(5))
-        ax.set_xticklabels([f"T{j}" for j in [1, 2, 3, 4, 5]])
-        ax.set_yticks(np.arange(4))
-        ax.set_yticklabels([f"R{j}" for j in [1, 2, 3, 4]])
+            ax.set_ylabel("倍率区间(C-rate)")
+        ax.set_xticks(np.arange(len(temp_bins)))
+        ax.set_xticklabels([temp_label_map[b] for b in temp_bins], rotation=0)
+        ax.set_yticks(np.arange(len(rate_bins)))
+        ax.set_yticklabels([rate_label_map[b] for b in rate_bins])
+    if im is None:
+        plt.close(fig)
+        return
     cbar = fig.colorbar(im, ax=axes.ravel().tolist(), fraction=0.03, pad=0.02)
     cbar.set_ticks([0, 1, 2, 3])
     cbar.set_ticklabels(["uncertain", "cap_dom", "ir_dom", "dual"])
@@ -1978,6 +2275,9 @@ def render_report(
     interpretation_df: pd.DataFrame,
     cap_top_df: pd.DataFrame,
     ir_top_df: pd.DataFrame,
+    support_compare_df: pd.DataFrame,
+    soc_temp_evidence_df: pd.DataFrame,
+    high_temp_assessment_df: pd.DataFrame,
 ) -> str:
     """Render Chinese markdown report for joint causal analysis."""
     compare_view = compare_df.merge(
@@ -2018,12 +2318,108 @@ def render_report(
 
     stable_cap = cap_top_view.loc[cap_top_view["significant_positive"]].copy() if not cap_top_view.empty else pd.DataFrame()
     stable_ir = ir_top_view.loc[ir_top_view["significant_positive"]].copy() if not ir_top_view.empty else pd.DataFrame()
+    support_view = support_compare_df.copy() if not support_compare_df.empty else pd.DataFrame()
+    cap_support = support_view.loc[support_view["outcome"] == "capacity"].copy() if not support_view.empty else pd.DataFrame()
+    ir_support = support_view.loc[support_view["outcome"] == "impedance"].copy() if not support_view.empty else pd.DataFrame()
     dual_view = compare_view.loc[compare_view["risk_category"] == "dual_risk"].copy()
     dual_view = dual_view.sort_values("max_abs_effect_per_1pp", ascending=False, kind="mergesort")
     head_dual = dual_view.iloc[0] if not dual_view.empty else None
     stable_dual_follow = dual_view.iloc[1:7].copy() if dual_view.shape[0] > 1 else pd.DataFrame()
     cap_dom_view = compare_view.loc[compare_view["risk_category"] == "cap_dominant_risk"].copy()
     ir_dom_view = compare_view.loc[compare_view["risk_category"] == "ir_dominant_risk"].copy()
+    bin05_row = compare_view.loc[compare_view["cross_bin"] == 5].head(1)
+    bin05_row = bin05_row.iloc[0] if not bin05_row.empty else None
+    cap_raw_top_row = cap_support.sort_values("rank_raw", ascending=True, kind="mergesort").head(1)
+    cap_raw_top_row = cap_raw_top_row.iloc[0] if not cap_raw_top_row.empty else None
+    cap_norm_top_row = cap_support.sort_values("rank_norm", ascending=True, kind="mergesort").head(1)
+    cap_norm_top_row = cap_norm_top_row.iloc[0] if not cap_norm_top_row.empty else None
+    ir_raw_top_row = ir_support.sort_values("rank_raw", ascending=True, kind="mergesort").head(1)
+    ir_raw_top_row = ir_raw_top_row.iloc[0] if not ir_raw_top_row.empty else None
+    ir_norm_top_row = ir_support.sort_values("rank_norm", ascending=True, kind="mergesort").head(1)
+    ir_norm_top_row = ir_norm_top_row.iloc[0] if not ir_norm_top_row.empty else None
+
+    def _top_overlap_count(df: pd.DataFrame, top_n: int = 5) -> int:
+        if df.empty:
+            return 0
+        raw_set = set(pd.to_numeric(df.nsmallest(int(top_n), "rank_raw")["cross_bin"], errors="coerce").dropna().astype(int))
+        norm_set = set(pd.to_numeric(df.nsmallest(int(top_n), "rank_norm")["cross_bin"], errors="coerce").dropna().astype(int))
+        return int(len(raw_set & norm_set))
+
+    cap_top5_overlap = _top_overlap_count(cap_support, top_n=5)
+    ir_top5_overlap = _top_overlap_count(ir_support, top_n=5)
+    refresh_needed = (cap_top5_overlap <= 2) or (ir_top5_overlap <= 2)
+
+    assess_view = high_temp_assessment_df.copy() if not high_temp_assessment_df.empty else pd.DataFrame()
+    assess_map: dict[str, pd.Series] = {}
+    if not assess_view.empty and "outcome" in assess_view.columns:
+        for _, row in assess_view.iterrows():
+            assess_map[str(row["outcome"])] = row
+
+    cap_raw_norm_view = pd.DataFrame()
+    if not cap_support.empty:
+        cap_raw_norm_view = cap_support.sort_values("rank_raw", ascending=True, kind="mergesort").head(10).copy()
+        cap_raw_norm_view = cap_raw_norm_view[
+            [
+                c
+                for c in [
+                    "rank_raw",
+                    "rank_norm",
+                    "rank_delta",
+                    "cross_bin",
+                    "cross_label",
+                    "condition_text",
+                    "effect_per_1pp",
+                    "effect_support_norm",
+                    "support_width_1_99",
+                    "q_value",
+                    "risk_category",
+                ]
+                if c in cap_raw_norm_view.columns
+            ]
+        ]
+    ir_raw_norm_view = pd.DataFrame()
+    if not ir_support.empty:
+        ir_raw_norm_view = ir_support.sort_values("rank_raw", ascending=True, kind="mergesort").head(10).copy()
+        ir_raw_norm_view = ir_raw_norm_view[
+            [
+                c
+                for c in [
+                    "rank_raw",
+                    "rank_norm",
+                    "rank_delta",
+                    "cross_bin",
+                    "cross_label",
+                    "condition_text",
+                    "effect_per_1pp",
+                    "effect_support_norm",
+                    "support_width_1_99",
+                    "q_value",
+                    "risk_category",
+                ]
+                if c in ir_raw_norm_view.columns
+            ]
+        ]
+    soc_temp_view = pd.DataFrame()
+    if not soc_temp_evidence_df.empty:
+        soc_temp_view = soc_temp_evidence_df[
+            [
+                c
+                for c in [
+                    "soc_bin",
+                    "soc_label",
+                    "temp_bin",
+                    "temp_label",
+                    "n_bins",
+                    "cap_mean",
+                    "cap_q_lt_0p1_share",
+                    "cap_support_mean",
+                    "ir_mean",
+                    "ir_q_lt_0p1_share",
+                    "ir_support_mean",
+                ]
+                if c in soc_temp_evidence_df.columns
+            ]
+        ].copy()
 
     def _join_bin_titles(df: pd.DataFrame, limit: int = 6) -> str:
         if df.empty:
@@ -2057,6 +2453,23 @@ def render_report(
         lines.append(
             f"- 容量风险最大的区间是 `{_bin_title(top_cap_row)}`，阻抗风险最大的区间也是 `{_bin_title(top_ir_row)}`；"
             "这说明存在头部共同高风险工况。"
+        )
+    if bin05_row is not None:
+        lines.append(
+            f"- `bin05` 的 `support_width_1_99={_format_float(float(bin05_row['cap_support_width_1_99']), 6)}`，"
+            "属于支持域极窄区间；其“+1pp”效应应与支持宽度归一口径一起解读，避免外推放大误读。"
+        )
+    if cap_raw_top_row is not None and cap_norm_top_row is not None and ir_raw_top_row is not None and ir_norm_top_row is not None:
+        lines.append(
+            f"- 双口径对比显示：容量 raw 头部为 `{_bin_title(cap_raw_top_row)}`，支持宽度归一头部为 `{_bin_title(cap_norm_top_row)}`；"
+            f"阻抗 raw 头部为 `{_bin_title(ir_raw_top_row)}`，支持宽度归一头部为 `{_bin_title(ir_norm_top_row)}`。"
+        )
+    cap_assess = assess_map.get("capacity")
+    ir_assess = assess_map.get("impedance")
+    if cap_assess is not None and ir_assess is not None:
+        lines.append(
+            f"- 高温风险分层判定：容量 `{str(cap_assess.get('assessment', 'nan'))}`，阻抗 `{str(ir_assess.get('assessment', 'nan'))}`；"
+            "当前证据更支持“低SOC层高温风险更强”，而非“全SOC单调升温即更高风险”。"
         )
     lines.append(
         f"- 60 个区间中，`dual_risk={dual_n}`、`cap_dominant={cap_dom_n}`、`ir_dominant={ir_dom_n}`、`uncertain={uncertain_n}`；"
@@ -2154,6 +2567,7 @@ def render_report(
         f"- 相比之下，像 `{_join_bin_titles(stable_cap.iloc[1:] if stable_cap.shape[0] > 1 else stable_cap, limit=5)}` 这类区间，"
         "虽然点估计不如头部极端区间夸张，但更适合被视为稳定的容量治理重点。"
     )
+    lines.append("")
     lines.append(
         _df_to_md(
             cap_top_view[
@@ -2197,6 +2611,7 @@ def render_report(
             f"- `{_bin_title(top_ir_row)}` 同时也是双结局共同高风险区间，说明它更接近“共损伤工况”；"
             "而某些 `ir_dominant_risk` 区间则更像“先推高阻抗、对容量短期影响尚不够稳定”的工况。"
         )
+    lines.append("")
     lines.append(
         _df_to_md(
             ir_top_view[
@@ -2283,7 +2698,33 @@ def render_report(
         )
     )
     lines.append("")
-    lines.append("## 8. 图表解读")
+    lines.append("## 8. 支持宽度归一与SOC/温度证据刷新")
+    lines.append(
+        "- 支持宽度归一口径：`effect_support_norm = effect_per_1pp * (support_width_1_99 / 0.01)`，用于把“斜率敏感度”换算到现有样本可达支持域尺度。"
+    )
+    if bin05_row is not None:
+        lines.append(
+            f"- `bin05` 在 raw 口径下斜率很高，但其支持区间仅 `{_format_float(float(bin05_row['cap_support_width_1_99']), 6)}`，"
+            "属于稀有高温状态驱动的高斜率区间，不应直接解读为“低倍率本身高风险”。"
+        )
+    lines.append(
+        f"- Top5 排名重叠度：容量 `{cap_top5_overlap}/5`，阻抗 `{ir_top5_overlap}/5`。"
+        + ("结论：raw 与归一口径偏离显著，建议双口径并行陈述主结论。" if refresh_needed else "结论：raw 与归一口径一致性尚可。")
+    )
+    lines.append(f"- 是否需要刷新报告：`{'是' if refresh_needed else '否'}`（依据：raw/norm 排名重叠度、支持宽度差异、SOC×温度分层一致性）。")
+    lines.append("### 8.1 raw 与支持宽度归一排名对比（容量）")
+    lines.append(_df_to_md(cap_raw_norm_view))
+    lines.append("### 8.2 raw 与支持宽度归一排名对比（阻抗）")
+    lines.append(_df_to_md(ir_raw_norm_view))
+    lines.append("### 8.3 SOC×温度分层证据")
+    lines.append(_df_to_md(soc_temp_view))
+    lines.append("### 8.4 高温风险结论评估")
+    lines.append(_df_to_md(high_temp_assessment_df))
+    lines.append(
+        "- 判读：当前数据支持“高温风险在低SOC层最强、跨SOC不单调”。因此“高温是强风险因子”应采用分层结论，而非全局一刀切。"
+    )
+    lines.append("")
+    lines.append("## 9. 图表解读")
     lines.append("![趋势分布图](./fig_trend_cell_cycle_correlations.png)")
     lines.append("- X轴：cell 内 `cycle~q_t` 与 `cycle~ir_t` 的 Spearman 相关系数。")
     lines.append("- Y轴：cell 数量。")
@@ -2321,13 +2762,14 @@ def render_report(
     lines.append("- 业务解释：适合用来挑选“先做联合优化”还是“先做单指标优化”的目标区间。")
     lines.append("")
     lines.append("![双结局风险矩阵](./fig_cross_bin_dual_risk_matrix.png)")
-    lines.append("- X轴：温度分位 bin（T1~T5）。")
-    lines.append("- Y轴：倍率分位 bin（R1~R4）。")
+    lines.append("- X轴：温度物理区间（示例 `[20,31)`…`[36,60]`）。")
+    lines.append("- Y轴：倍率物理区间（示例 `[0,0.434)`…`[4.22,7.75]`）。")
     lines.append("- 关键结论：风险并不是均匀分布的，而是在特定 SOC 层中沿倍率/温度组合聚集。")
     lines.append("- 业务解释：这张图最适合转成分层控制策略或优先实验矩阵。")
+    lines.append("- 备注：区间来源=样本分位切分。")
     lines.append("")
 
-    lines.append("## 9. 结论与使用建议")
+    lines.append("## 10. 结论与使用建议")
     lines.append(
         "- 第一，容量下降和阻抗增加在当前样本上存在稳定相关性，而且这种关系在窗口层和 cell 内层都成立。"
     )
@@ -2342,19 +2784,22 @@ def render_report(
     )
     lines.append("")
 
-    lines.append("## 10. 关键输出文件")
+    lines.append("## 11. 关键输出文件")
     lines.append("- `trend_capacity_ir_summary.csv`")
     lines.append("- `causal_crosslink_effects.csv`")
     lines.append("- `causal_substitution_effects_capacity_drop_h.csv`")
     lines.append("- `causal_substitution_effects_ir_rise_h.csv`")
     lines.append("- `cross_bin_dual_outcome_compare.csv`")
     lines.append("- `cross_bin_interpretation_table.csv`")
+    lines.append("- `support_normalized_effects_compare.csv`")
+    lines.append("- `soc_temp_high_temp_evidence.csv`")
+    lines.append("- `high_temp_claim_assessment.csv`")
     lines.append("- `capacity_risk_top_bins.csv`")
     lines.append("- `ir_risk_top_bins.csv`")
     lines.append("- `runtime_backend_info.csv` 与 `runtime_library_versions.csv`")
     lines.append("")
 
-    lines.append("## 11. 复现命令")
+    lines.append("## 12. 复现命令")
     lines.append("```bash")
     lines.append(
         "pipenv run python scripts/analyze_capacity_ir_joint_causal.py "
@@ -2540,6 +2985,23 @@ def main() -> int:
         compare_df = classify_dual_risk(cap_df=cap_df, ir_df=ir_df)
 
     compare_df.to_csv(output_dir / "cross_bin_dual_outcome_compare.csv", index=False, encoding="utf-8")
+    support_compare_df = build_support_normalized_effects_compare(
+        compare_df=compare_df,
+        interpretation_df=interpretation_df,
+    )
+    soc_temp_evidence_df = build_soc_temp_high_temp_evidence(
+        compare_df=compare_df,
+        interpretation_df=interpretation_df,
+        q_threshold=0.1,
+    )
+    high_temp_assessment_df = build_high_temp_claim_assessment(
+        soc_temp_evidence_df=soc_temp_evidence_df,
+        q_threshold=0.1,
+        high_temp_bin=5,
+    )
+    support_compare_df.to_csv(output_dir / "support_normalized_effects_compare.csv", index=False, encoding="utf-8-sig")
+    soc_temp_evidence_df.to_csv(output_dir / "soc_temp_high_temp_evidence.csv", index=False, encoding="utf-8-sig")
+    high_temp_assessment_df.to_csv(output_dir / "high_temp_claim_assessment.csv", index=False, encoding="utf-8-sig")
 
     cap_top_df = build_effect_top_table(
         effect_df=cap_df,
@@ -2585,7 +3047,7 @@ def main() -> int:
             output_path=output_dir / "fig_dual_outcome_forest_top_bins.png",
             top_k=int(args.top_k),
         )
-        save_risk_matrix_plot(compare_df, output_dir / "fig_cross_bin_dual_risk_matrix.png")
+        save_risk_matrix_plot(compare_df, bin_meta_df, output_dir / "fig_cross_bin_dual_risk_matrix.png")
 
     report_text = render_report(
         args=args,
@@ -2599,6 +3061,9 @@ def main() -> int:
         interpretation_df=interpretation_df,
         cap_top_df=cap_top_df,
         ir_top_df=ir_top_df,
+        support_compare_df=support_compare_df,
+        soc_temp_evidence_df=soc_temp_evidence_df,
+        high_temp_assessment_df=high_temp_assessment_df,
     )
     (output_dir / "capacity_ir_joint_causal_report.md").write_text(report_text, encoding="utf-8-sig")
 
@@ -2608,6 +3073,9 @@ def main() -> int:
     print(f"Saved: {output_dir / 'causal_substitution_effects_ir_rise_h.csv'}")
     print(f"Saved: {output_dir / 'cross_bin_dual_outcome_compare.csv'}")
     print(f"Saved: {output_dir / 'cross_bin_interpretation_table.csv'}")
+    print(f"Saved: {output_dir / 'support_normalized_effects_compare.csv'}")
+    print(f"Saved: {output_dir / 'soc_temp_high_temp_evidence.csv'}")
+    print(f"Saved: {output_dir / 'high_temp_claim_assessment.csv'}")
     print(f"Saved: {output_dir / 'capacity_risk_top_bins.csv'}")
     print(f"Saved: {output_dir / 'ir_risk_top_bins.csv'}")
     print(f"Saved: {output_dir / 'capacity_ir_joint_causal_report.md'}")

@@ -43,6 +43,7 @@ LSTM_METHODS = [
     "monotonic_lstm_penalty",
     "monotonic_lstm_delta_strict",
     "monotonic_lstm_delta_with_history_retention",
+    "monotonic_lstm_delta_last_retention_only",
 ]
 FORBIDDEN_CHECK_COLS = {
     "cycles",
@@ -229,6 +230,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lambda-smooth", type=float, default=0.1)
     parser.add_argument("--gradient-clip", type=float, default=1.0)
     parser.add_argument("--delta-init-bias", type=float, default=-6.0)
+    parser.add_argument(
+        "--lstm-route-set",
+        choices=["standard", "last_retention_only", "standard_plus_last_retention_only"],
+        default="standard",
+        help="Select LSTM routes to train; last_retention_only trains only a 1x1 last-retention scalar ablation.",
+    )
     parser.add_argument("--device", choices=["auto", "cpu", "cuda"], default="auto")
     parser.add_argument("--random-seed", type=int, default=20260511)
     parser.add_argument("--q-min", type=float, default=0.3)
@@ -662,6 +669,17 @@ def make_lstm_input(
     return np.concatenate([x_norm, history_ret_z], axis=2).astype(np.float32)
 
 
+def make_last_retention_only_lstm_input(
+    samples: Sequence[BlockSample],
+    retention_standardizer: RetentionStandardizer,
+) -> np.ndarray:
+    """Create a one-step, one-channel LSTM input containing only last historical retention."""
+
+    last_retention = np.asarray([sample.history_retention[-1] for sample in samples], dtype=np.float32)
+    last_z = retention_standardizer.transform(last_retention)
+    return last_z.reshape(last_z.shape[0], 1, 1).astype(np.float32)
+
+
 def compute_feature_standardizer(samples: Sequence[BlockSample]) -> Tuple[np.ndarray, np.ndarray]:
     """Calculate train-only feature mean and standard deviation."""
 
@@ -907,64 +925,101 @@ def train_lstm_methods(
     epoch_log_path = out_dir / "epoch_log.csv"
     if epoch_log_path.exists():
         epoch_log_path.unlink()
-    strict_train_x = make_lstm_input(train_samples, feature_mean, feature_std, retention_standardizer, False)
-    strict_valid_x = make_lstm_input(valid_samples, feature_mean, feature_std, retention_standardizer, False)
-    history_train_x = make_lstm_input(train_samples, feature_mean, feature_std, retention_standardizer, True)
-    history_valid_x = make_lstm_input(valid_samples, feature_mean, feature_std, retention_standardizer, True)
+    route_set = str(args.lstm_route_set)
+    train_standard = route_set in {"standard", "standard_plus_last_retention_only"}
+    train_last_only = route_set in {"last_retention_only", "standard_plus_last_retention_only"}
     print(f"Training monotonic LSTM methods on {device}...", flush=True)
-    results = [
-        train_one_lstm(
-            method="monotonic_lstm_penalty",
-            mode="penalty",
-            x_train=strict_train_x,
-            x_valid=strict_valid_x,
-            y_train_z=y_train_z,
-            y_valid_z=y_valid_z,
-            y_train_actual=y_train_ret,
-            y_valid_actual=y_valid_ret,
-            last_train_z=last_train_z,
-            last_valid_z=last_valid_z,
-            retention_standardizer=retention_standardizer,
-            args=args,
-            device=device,
-            out_dir=out_dir,
-            epoch_log_path=epoch_log_path,
-        ),
-        train_one_lstm(
-            method="monotonic_lstm_delta_strict",
-            mode="delta",
-            x_train=strict_train_x,
-            x_valid=strict_valid_x,
-            y_train_z=y_train_z,
-            y_valid_z=y_valid_z,
-            y_train_actual=y_train_ret,
-            y_valid_actual=y_valid_ret,
-            last_train_z=last_train_z,
-            last_valid_z=last_valid_z,
-            retention_standardizer=retention_standardizer,
-            args=args,
-            device=device,
-            out_dir=out_dir,
-            epoch_log_path=epoch_log_path,
-        ),
-        train_one_lstm(
-            method="monotonic_lstm_delta_with_history_retention",
-            mode="delta",
-            x_train=history_train_x,
-            x_valid=history_valid_x,
-            y_train_z=y_train_z,
-            y_valid_z=y_valid_z,
-            y_train_actual=y_train_ret,
-            y_valid_actual=y_valid_ret,
-            last_train_z=last_train_z,
-            last_valid_z=last_valid_z,
-            retention_standardizer=retention_standardizer,
-            args=args,
-            device=device,
-            out_dir=out_dir,
-            epoch_log_path=epoch_log_path,
-        ),
-    ]
+    results: List[LstmResult] = []
+    strict_train_x: Optional[np.ndarray] = None
+    strict_valid_x: Optional[np.ndarray] = None
+    history_train_x: Optional[np.ndarray] = None
+    history_valid_x: Optional[np.ndarray] = None
+    last_only_train_x: Optional[np.ndarray] = None
+    last_only_valid_x: Optional[np.ndarray] = None
+    if train_standard:
+        strict_train_x = make_lstm_input(train_samples, feature_mean, feature_std, retention_standardizer, False)
+        strict_valid_x = make_lstm_input(valid_samples, feature_mean, feature_std, retention_standardizer, False)
+        history_train_x = make_lstm_input(train_samples, feature_mean, feature_std, retention_standardizer, True)
+        history_valid_x = make_lstm_input(valid_samples, feature_mean, feature_std, retention_standardizer, True)
+        results.extend(
+            [
+                train_one_lstm(
+                    method="monotonic_lstm_penalty",
+                    mode="penalty",
+                    x_train=strict_train_x,
+                    x_valid=strict_valid_x,
+                    y_train_z=y_train_z,
+                    y_valid_z=y_valid_z,
+                    y_train_actual=y_train_ret,
+                    y_valid_actual=y_valid_ret,
+                    last_train_z=last_train_z,
+                    last_valid_z=last_valid_z,
+                    retention_standardizer=retention_standardizer,
+                    args=args,
+                    device=device,
+                    out_dir=out_dir,
+                    epoch_log_path=epoch_log_path,
+                ),
+                train_one_lstm(
+                    method="monotonic_lstm_delta_strict",
+                    mode="delta",
+                    x_train=strict_train_x,
+                    x_valid=strict_valid_x,
+                    y_train_z=y_train_z,
+                    y_valid_z=y_valid_z,
+                    y_train_actual=y_train_ret,
+                    y_valid_actual=y_valid_ret,
+                    last_train_z=last_train_z,
+                    last_valid_z=last_valid_z,
+                    retention_standardizer=retention_standardizer,
+                    args=args,
+                    device=device,
+                    out_dir=out_dir,
+                    epoch_log_path=epoch_log_path,
+                ),
+                train_one_lstm(
+                    method="monotonic_lstm_delta_with_history_retention",
+                    mode="delta",
+                    x_train=history_train_x,
+                    x_valid=history_valid_x,
+                    y_train_z=y_train_z,
+                    y_valid_z=y_valid_z,
+                    y_train_actual=y_train_ret,
+                    y_valid_actual=y_valid_ret,
+                    last_train_z=last_train_z,
+                    last_valid_z=last_valid_z,
+                    retention_standardizer=retention_standardizer,
+                    args=args,
+                    device=device,
+                    out_dir=out_dir,
+                    epoch_log_path=epoch_log_path,
+                ),
+            ]
+        )
+    if train_last_only:
+        last_only_train_x = make_last_retention_only_lstm_input(train_samples, retention_standardizer)
+        last_only_valid_x = make_last_retention_only_lstm_input(valid_samples, retention_standardizer)
+        results.append(
+            train_one_lstm(
+                method="monotonic_lstm_delta_last_retention_only",
+                mode="delta",
+                x_train=last_only_train_x,
+                x_valid=last_only_valid_x,
+                y_train_z=y_train_z,
+                y_valid_z=y_valid_z,
+                y_train_actual=y_train_ret,
+                y_valid_actual=y_valid_ret,
+                last_train_z=last_train_z,
+                last_valid_z=last_valid_z,
+                retention_standardizer=retention_standardizer,
+                args=args,
+                device=device,
+                out_dir=out_dir,
+                epoch_log_path=epoch_log_path,
+            )
+        )
+    if not results:
+        raise RuntimeError(f"No LSTM methods selected for lstm_route_set={route_set}")
     train_pred_map = {result.method: result.train_pred for result in results}
     valid_pred_map = {result.method: result.valid_pred for result in results}
     pred_long = pd.concat(
@@ -1001,8 +1056,11 @@ def train_lstm_methods(
         "feature_std": feature_std.astype(float).tolist(),
         "retention_mean": float(retention_standardizer.mean),
         "retention_std": float(retention_standardizer.std),
-        "strict_input_dim": int(strict_train_x.shape[2]),
-        "history_retention_input_dim": int(history_train_x.shape[2]),
+        "lstm_route_set": route_set,
+        "strict_input_dim": int(strict_train_x.shape[2]) if strict_train_x is not None else 0,
+        "history_retention_input_dim": int(history_train_x.shape[2]) if history_train_x is not None else 0,
+        "last_retention_only_input_dim": int(last_only_train_x.shape[2]) if last_only_train_x is not None else 0,
+        "last_retention_only_sequence_len": int(last_only_train_x.shape[1]) if last_only_train_x is not None else 0,
     }
     (out_dir / "standardization_config.json").write_text(
         json.dumps(standardizer_config, ensure_ascii=False, indent=2),
@@ -1233,6 +1291,7 @@ def comparison_rows(
         ("monotonic_lstm_penalty", "monotonic LSTM penalty", "100x55", "软约束"),
         ("monotonic_lstm_delta_strict", "monotonic LSTM delta strict", "100x55 + last_history_retention作为递推起点", "硬约束"),
         ("monotonic_lstm_delta_with_history_retention", "monotonic LSTM delta with history retention", "100x56", "硬约束"),
+        ("monotonic_lstm_delta_last_retention_only", "monotonic LSTM delta last retention only", "1x1 last_history_retention", "硬约束"),
     ]
     rows: List[Dict[str, object]] = []
     for method, label, input_desc, mono_desc in method_specs:
@@ -1466,6 +1525,7 @@ def write_run_config(
         "learning_rate": float(args.learning_rate),
         "lambda_mono": float(args.lambda_mono),
         "lambda_smooth": float(args.lambda_smooth),
+        "lstm_route_set": str(args.lstm_route_set),
         "baseline_source": baseline_source,
         "train_blocks": int(len(train_samples)),
         "valid_blocks": int(len(valid_samples)),
